@@ -2,7 +2,16 @@
 
 What you need to provide to get everything live, and where each value goes. Nothing here should ever be committed: env values go in Vercel or local `.env` files (ignored by git).
 
-## 1. Web app on Vercel (required to go live)
+## 1. Web app on Vercel — done
+
+Configured on 2026-10-25:
+
+- Project `agentic-hub` on team **faizm10's projects**, root directory `apps/web`, Next.js, Node 24, connected to `github.com/faizm10/agentic-hub` (pushes to `main` deploy to production).
+- **Neon Postgres** (`agentic-hub-db`) from the Marketplace, connected to Production, Preview and Development (sets `DATABASE_URL` and friends).
+- `AGENTIC_HUB_ENCRYPTION_KEY`: generated and stored as a Secret (Production, Preview) and Config (Development). **Backup copy: `~/.agentic-hub-secrets/vercel-encryption-key.txt`** (owner-only). Move it into a password manager.
+- `AGENTIC_HUB_ALLOWED_EMAILS=faizmustansar10@gmail.com` (Production, Preview): only you can sign up. Change with `vercel env update AGENTIC_HUB_ALLOWED_EMAILS production` from `apps/web`.
+
+For reference, this is what it took (you don't need to redo it):
 
 | What | Where to get it | Where it goes |
 | --- | --- | --- |
