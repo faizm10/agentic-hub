@@ -27,11 +27,15 @@ The runtime binds to `127.0.0.1` by default. A random bearer token is generated 
 
 `GET /sessions/:id/events?after=N` returns JSON by default, with events whose `sequence` is strictly greater than `N` (`after` defaults to `-1`). `nextSequence` is the next sequence number the server will assign. With `Accept: text/event-stream`, the same route replays after `Last-Event-ID` (or `after`, if supplied), then follows live events. Each SSE record uses `id: <sequence>`, `event: <AgentEvent.type>`, and `data: <AgentEvent JSON>`. Event sequence numbers are per session, contiguous from zero, and assigned after durable persistence. Reconnect with the last received ID; clients should deduplicate by `(sessionId, sequence)`. A heartbeat comment may appear without an event ID. Event payloads are complete snapshots, not token deltas. A `completed` event terminates a turn; the stream may stay open for a later turn.
 
+SSE requires the same bearer header as JSON routes. Browser `EventSource` cannot set that header, so use an authenticated `fetch` stream in desktop or a separately designed, explicitly paired bridge for web. The runtime does not enable CORS.
+
 ## Lifecycle and approvals
 
 Sessions begin `idle`. A message creates a task and run, then moves the session to `running`. A provider approval moves it to `awaiting_approval`; resolving it returns to `running`. A turn ends `completed`, `failed`, or `cancelled`. Another message may be sent after `completed`, `failed`, or `cancelled` if the adapter supports interactive messages. Runtime restart marks in-flight sessions and runs `interrupted`; interrupted sessions require a new message to resume and are never silently replayed. `providerSessionId` preserves the provider's opaque conversation identifier when available. No event is fabricated to imply a provider approval or tool action that the provider did not report. Runtime decisions and provider events share the same ordered log.
 
 Approval resolution must call the provider's supported mechanism before marking approval resolved. If that mechanism is unavailable, `/approvals/:id/resolve` returns `UNSUPPORTED_ACTION`; it never silently auto-approves. Clients should show `ApprovalRequest.description` as untrusted text.
+
+`GET /sessions/:id/diff` reads the repository's current working tree against `HEAD`. Its `files` list includes untracked files; `patch` includes tracked changes only. It is a current repository snapshot, not a per-turn patch. Worktree isolation and remote access are outside this local v1 runtime.
 
 ## Errors
 
