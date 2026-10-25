@@ -1,12 +1,29 @@
+# Dependencies and package manager
 node_modules/
 .pnpm-store/
+
+# Build outputs
 dist/
+.next/
+out/
+coverage/
 .turbo/
 *.tsbuildinfo
+next-env.d.ts
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Runtime data (SQLite database and its encryption key)
 *.db
 *.db.key
 *.db-shm
 *.db-wal
+
+# Environment and secrets
 .env
 .env.*
 !.env.example
+
+# Tooling
+.DS_Store
+.gstack/

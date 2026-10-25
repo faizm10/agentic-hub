@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@agentic-hub/ui/styles.css";
+@source "../../../packages/ui/src";
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+body {
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Re-enable selection where people actually copy things. */
+input,
+textarea,
+pre,
+code,
+table,
+[data-role],
+[data-selectable] {
+  user-select: text;
+  -webkit-user-select: text;
+}

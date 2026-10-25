@@ -25,9 +25,16 @@ Register an existing Git repository with `POST /projects`, create a session with
 
 ## Frontend integration
 
-Cherry-pick the shared contract checkpoint `c4b2287fa023d4cdb5558ad6da4d722cd16bb296` into `feat/frontend` before importing `@agentic-hub/types`. Run `pnpm install` in that worktree. The desktop launcher starts `@agentic-hub/runtime`, reads its token file, and calls the printed loopback URL. Use bearer-authenticated `fetch` for SSE; native browser `EventSource` cannot add the token header. A web client requires a separate explicitly paired local bridge; this repository does not provide remote execution.
+The desktop UI (`apps/desktop`) and the shared UI library (`packages/ui`) talk to this runtime through `createRuntimeClient` (`packages/ui/src/client/runtime-client.ts`). In development, the desktop's Vite server exposes a same-origin `/runtime` bridge (`apps/desktop/runtime-bridge.ts`). The bridge reads the live token file and forwards requests to the loopback runtime, so the webview never holds the token and the runtime keeps CORS disabled. The web dashboard (`apps/web`) shows a disconnected state until a paired bridge exists. See [apps/README.md](apps/README.md).
 
-Provider sessions keep opaque Codex thread IDs or Claude session IDs. On runtime restart, active runs are marked `interrupted` and never silently replayed. New messages can resume a saved provider conversation when the provider ID exists.
+```sh
+pnpm install
+pnpm runtime:start     # terminal 1: builds and starts the runtime on 127.0.0.1:43117
+pnpm dev:desktop       # terminal 2: desktop UI at http://localhost:1420 (choose "Connect to the local runtime")
+pnpm dev:web           # optional: web dashboard at http://localhost:3200
+```
+
+For a native window, run `pnpm --filter @agentic-hub/desktop tauri:dev` instead of `dev:desktop`. This needs Rust and the Tauri prerequisites.
 
 ## Checks
 
@@ -38,7 +45,7 @@ pnpm test
 pnpm lint
 ```
 
-The `lint` script currently runs strict TypeScript checks; there is no separate style linter. Tests cover session transitions, concurrent turn rejection, persistence recovery and credential redaction, API authentication and validation, Git diff, and adapter event normalization. A live reply-only Codex turn returned `PONG` through App Server. Claude Code is installed but is currently signed out, so live Claude connectivity is unverified in this worktree. Approval paths have deterministic normalization coverage but have not yet been exercised against live provider prompts.
+For backend packages, `lint` runs strict TypeScript checks. The frontend packages use ESLint. `packages/ui` includes `runtime-client.integration.test.ts`, which drives the real runtime server (SessionManager, SQLite store, Git diff) through the frontend client with a scripted provider. Tests cover session transitions, concurrent turn rejection, persistence recovery and credential redaction, API authentication and validation, Git diff, and adapter event normalization. A live reply-only Codex turn returned `PONG` through App Server. Claude Code is installed but is currently signed out, so live Claude connectivity is unverified in this worktree. Approval paths have deterministic normalization coverage but have not yet been exercised against live provider prompts.
 
 The runtime encrypts persisted project, session, task, run, event, and approval payloads with AES-256-GCM. Its owner-only key file sits beside `runtime.db` and is required to reopen that database; back up the two together. Existing plaintext payload rows are encrypted when opened. Common API key and authorization token forms are also redacted from task and event text before storage and streaming. That redaction is best effort, so avoid credentials in prompts. Database index columns (IDs, project paths, status, timestamps, and event sequence numbers) remain plaintext. Codex currently forwards command and file change approval requests; other App Server input requests fail closed. Claude `AskUserQuestion` input is not yet represented by the v1 approval DTO. Git diff reports a repository-wide working tree snapshot; isolated worktree creation and a paired web bridge are deferred.
 

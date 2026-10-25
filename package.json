@@ -6,7 +6,16 @@
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "runtime:start": "turbo run build --filter=@agentic-hub/runtime && pnpm --filter @agentic-hub/runtime start",
+    "dev:desktop": "turbo run build --filter=@agentic-hub/desktop^... && pnpm --filter @agentic-hub/desktop dev",
+    "dev:web": "turbo run build --filter=@agentic-hub/web^... && pnpm --filter @agentic-hub/web dev",
+    "fe:typecheck": "turbo run typecheck --filter=@agentic-hub/ui --filter=@agentic-hub/desktop --filter=@agentic-hub/web",
+    "fe:lint": "turbo run lint --filter=@agentic-hub/ui --filter=@agentic-hub/desktop --filter=@agentic-hub/web",
+    "fe:test": "turbo run test --filter=@agentic-hub/ui",
+    "fe:build": "turbo run build --filter=@agentic-hub/desktop --filter=@agentic-hub/web",
+    "fe:check": "pnpm fe:typecheck && pnpm fe:lint && pnpm fe:test && pnpm fe:build"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
