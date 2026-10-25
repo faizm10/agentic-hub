@@ -1,12 +1,44 @@
 import Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {
   AgentEventSchema, ApprovalRequestSchema, ProjectSchema, SessionSchema, TaskRunSchema, TaskSchema,
   type AgentEvent, type ApprovalRequest, type NewAgentEvent, type Project, type Session, type Task, type TaskRun,
 } from '@agentic-hub/types';
 
 const parse = <T>(schema: { parse(value: unknown): T }, value: unknown): T => schema.parse(value);
-const fromRow = <T>(schema: { parse(value: unknown): T }, row: unknown): T | null => row && typeof row === 'object' && 'json' in row ? parse(schema, JSON.parse(String(row.json))) : null;
+const fromRow = <T>(schema: { parse(value: unknown): T }, row: unknown, key: Buffer): T | null => row && typeof row === 'object' && 'json' in row ? parse(schema, JSON.parse(unseal(String(row.json), key))) : null;
+
+function storageKey(filename: string, db: Database.Database): Buffer {
+  if (filename === ':memory:') return randomBytes(32);
+  const keyPath = `${filename}.key`;
+  if (!existsSync(keyPath)) {
+    const encrypted = db.prepare("SELECT value FROM runtime_metadata WHERE key='encrypted_payloads'").get();
+    if (encrypted) throw new Error('Runtime data key is missing');
+    try { writeFileSync(keyPath, randomBytes(32), { flag: 'wx', mode: 0o600 }); }
+    catch (error) { if (!existsSync(keyPath)) throw error; }
+  }
+  if ((statSync(keyPath).mode & 0o077) !== 0) throw new Error('Runtime data key must be owner-only');
+  const key = readFileSync(keyPath);
+  if (key.length !== 32) throw new Error('Invalid runtime data key');
+  return key;
+}
+
+function seal(plaintext: string, key: Buffer): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return `enc:v1:${Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64')}`;
+}
+
+function unseal(value: string, key: Buffer): string {
+  if (!value.startsWith('enc:v1:')) return value; // Existing databases are migrated on open.
+  const bytes = Buffer.from(value.slice(7), 'base64');
+  if (bytes.length < 28) throw new Error('Invalid encrypted runtime payload');
+  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+  decipher.setAuthTag(bytes.subarray(12, 28));
+  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');
+}
 
 /** Best-effort removal of common credentials before text reaches durable storage. */
 export function redactStoredText(value: string): string {
@@ -30,10 +62,12 @@ function redactEvent(event: NewAgentEvent): NewAgentEvent {
 
 export class Store {
   readonly db: Database.Database;
+  private readonly key: Buffer;
   constructor(filename: string) {
     this.db = new Database(filename);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    this.db.pragma('secure_delete = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL);
@@ -44,57 +78,83 @@ export class Store {
       CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, sequence);
     `);
-    this.recover();
+    try {
+      this.key = storageKey(filename, this.db);
+      this.migratePlaintextRows();
+      this.db.prepare("INSERT INTO runtime_metadata (key,value) VALUES ('encrypted_payloads','v1') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run();
+      this.recover();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
   close(): void { this.db.close(); }
+  private migratePlaintextRows(): void {
+    let migrated = false;
+    this.db.transaction(() => {
+      for (const table of ['projects', 'sessions', 'tasks', 'task_runs', 'events', 'approvals']) {
+        const rows = this.db.prepare(`SELECT rowid, json FROM ${table} WHERE json NOT LIKE 'enc:v1:%'`).all() as { rowid: number; json: string }[];
+        const update = this.db.prepare(`UPDATE ${table} SET json=? WHERE rowid=?`);
+        for (const row of rows) {
+          update.run(seal(row.json, this.key), row.rowid);
+          migrated = true;
+        }
+      }
+    })();
+    if (migrated) {
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+      this.db.exec('VACUUM');
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+    }
+  }
   private recover(): void {
     this.db.transaction(() => {
       for (const row of this.db.prepare("SELECT json FROM sessions WHERE status IN ('running','awaiting_approval')").all()) {
-        const session = fromRow(SessionSchema, row)!;
+        const session = fromRow(SessionSchema, row, this.key)!;
         this.saveSession({ ...session, status: 'interrupted', updatedAt: new Date().toISOString() });
       }
       for (const row of this.db.prepare("SELECT json FROM task_runs WHERE status IN ('queued','running','awaiting_approval')").all()) {
-        const run = fromRow(TaskRunSchema, row)!;
+        const run = fromRow(TaskRunSchema, row, this.key)!;
         this.saveRun({ ...run, status: 'interrupted', finishedAt: new Date().toISOString(), error: 'Runtime restarted' });
       }
     })();
   }
   putProject(project: Project): void {
     ProjectSchema.parse(project);
-    this.db.prepare('INSERT INTO projects (id,path,json) VALUES (?,?,?)').run(project.id, project.path, JSON.stringify(project));
+    this.db.prepare('INSERT INTO projects (id,path,json) VALUES (?,?,?)').run(project.id, project.path, seal(JSON.stringify(project), this.key));
   }
-  project(id: string): Project | null { return fromRow(ProjectSchema, this.db.prepare('SELECT json FROM projects WHERE id=?').get(id)); }
-  projectByPath(path: string): Project | null { return fromRow(ProjectSchema, this.db.prepare('SELECT json FROM projects WHERE path=?').get(path)); }
-  projects(): Project[] { return this.db.prepare('SELECT json FROM projects ORDER BY rowid DESC').all().map(row => fromRow(ProjectSchema, row)!); }
+  project(id: string): Project | null { return fromRow(ProjectSchema, this.db.prepare('SELECT json FROM projects WHERE id=?').get(id), this.key); }
+  projectByPath(path: string): Project | null { return fromRow(ProjectSchema, this.db.prepare('SELECT json FROM projects WHERE path=?').get(path), this.key); }
+  projects(): Project[] { return this.db.prepare('SELECT json FROM projects ORDER BY rowid DESC').all().map(row => fromRow(ProjectSchema, row, this.key)!); }
   saveSession(session: Session): void {
     SessionSchema.parse(session);
-    this.db.prepare('INSERT INTO sessions (id,project_id,status,updated_at,json) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at,json=excluded.json').run(session.id, session.projectId, session.status, session.updatedAt, JSON.stringify(session));
+    this.db.prepare('INSERT INTO sessions (id,project_id,status,updated_at,json) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at,json=excluded.json').run(session.id, session.projectId, session.status, session.updatedAt, seal(JSON.stringify(session), this.key));
   }
-  session(id: string): Session | null { return fromRow(SessionSchema, this.db.prepare('SELECT json FROM sessions WHERE id=?').get(id)); }
-  sessions(): Session[] { return this.db.prepare('SELECT json FROM sessions ORDER BY updated_at DESC').all().map(row => fromRow(SessionSchema, row)!); }
+  session(id: string): Session | null { return fromRow(SessionSchema, this.db.prepare('SELECT json FROM sessions WHERE id=?').get(id), this.key); }
+  sessions(): Session[] { return this.db.prepare('SELECT json FROM sessions ORDER BY updated_at DESC').all().map(row => fromRow(SessionSchema, row, this.key)!); }
   saveTask(task: Task): void {
     const stored = TaskSchema.parse({ ...task, prompt: redactStoredText(task.prompt) });
-    this.db.prepare('INSERT INTO tasks (id,session_id,json) VALUES (?,?,?)').run(stored.id, stored.sessionId, JSON.stringify(stored));
+    this.db.prepare('INSERT INTO tasks (id,session_id,json) VALUES (?,?,?)').run(stored.id, stored.sessionId, seal(JSON.stringify(stored), this.key));
   }
   saveRun(run: TaskRun): void {
     const stored = TaskRunSchema.parse({ ...run, error: run.error === null ? null : redactStoredText(run.error) });
-    this.db.prepare('INSERT INTO task_runs (id,task_id,session_id,status,json) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.taskId, stored.sessionId, stored.status, JSON.stringify(stored));
+    this.db.prepare('INSERT INTO task_runs (id,task_id,session_id,status,json) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.taskId, stored.sessionId, stored.status, seal(JSON.stringify(stored), this.key));
   }
-  run(id: string): TaskRun | null { return fromRow(TaskRunSchema, this.db.prepare('SELECT json FROM task_runs WHERE id=?').get(id)); }
-  runs(sessionId: string): TaskRun[] { return this.db.prepare('SELECT json FROM task_runs WHERE session_id=? ORDER BY rowid').all(sessionId).map(row => fromRow(TaskRunSchema, row)!); }
+  run(id: string): TaskRun | null { return fromRow(TaskRunSchema, this.db.prepare('SELECT json FROM task_runs WHERE id=?').get(id), this.key); }
+  runs(sessionId: string): TaskRun[] { return this.db.prepare('SELECT json FROM task_runs WHERE session_id=? ORDER BY rowid').all(sessionId).map(row => fromRow(TaskRunSchema, row, this.key)!); }
   appendEvent(sessionId: string, runId: string, event: NewAgentEvent): AgentEvent {
     return this.db.transaction(() => {
       const row = this.db.prepare('SELECT COALESCE(MAX(sequence)+1,0) AS next FROM events WHERE session_id=?').get(sessionId) as { next: number };
       const full = AgentEventSchema.parse({ ...redactEvent(event), id: randomUUID(), sessionId, taskRunId: runId, sequence: row.next, createdAt: new Date().toISOString() });
-      this.db.prepare('INSERT INTO events (id,session_id,task_run_id,sequence,json) VALUES (?,?,?,?,?)').run(full.id, sessionId, runId, full.sequence, JSON.stringify(full));
+      this.db.prepare('INSERT INTO events (id,session_id,task_run_id,sequence,json) VALUES (?,?,?,?,?)').run(full.id, sessionId, runId, full.sequence, seal(JSON.stringify(full), this.key));
       return full;
     })();
   }
-  events(sessionId: string, after = -1): AgentEvent[] { return this.db.prepare('SELECT json FROM events WHERE session_id=? AND sequence>? ORDER BY sequence').all(sessionId, after).map(row => fromRow(AgentEventSchema, row)!); }
+  events(sessionId: string, after = -1): AgentEvent[] { return this.db.prepare('SELECT json FROM events WHERE session_id=? AND sequence>? ORDER BY sequence').all(sessionId, after).map(row => fromRow(AgentEventSchema, row, this.key)!); }
   nextSequence(sessionId: string): number { return (this.db.prepare('SELECT COALESCE(MAX(sequence)+1,0) AS next FROM events WHERE session_id=?').get(sessionId) as { next: number }).next; }
   saveApproval(approval: ApprovalRequest): void {
     const stored = ApprovalRequestSchema.parse({ ...approval, description: redactStoredText(approval.description) });
-    this.db.prepare('INSERT INTO approvals (id,session_id,status,json) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.sessionId, stored.status, JSON.stringify(stored));
+    this.db.prepare('INSERT INTO approvals (id,session_id,status,json) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.sessionId, stored.status, seal(JSON.stringify(stored), this.key));
   }
-  approval(id: string): ApprovalRequest | null { return fromRow(ApprovalRequestSchema, this.db.prepare('SELECT json FROM approvals WHERE id=?').get(id)); }
+  approval(id: string): ApprovalRequest | null { return fromRow(ApprovalRequestSchema, this.db.prepare('SELECT json FROM approvals WHERE id=?').get(id), this.key); }
 }

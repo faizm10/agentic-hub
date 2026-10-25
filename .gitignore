@@ -4,6 +4,7 @@ dist/
 .turbo/
 *.tsbuildinfo
 *.db
+*.db.key
 *.db-shm
 *.db-wal
 .env
