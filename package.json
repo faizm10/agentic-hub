@@ -1,0 +1,14 @@
+{
+  "name": "agentic-hub",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "dev:desktop": "pnpm --filter @agentic-hub/desktop dev",
+    "dev:web": "pnpm --filter @agentic-hub/web dev",
+    "fe:typecheck": "pnpm --filter @agentic-hub/ui --filter @agentic-hub/desktop --filter @agentic-hub/web typecheck",
+    "fe:lint": "pnpm --filter @agentic-hub/ui --filter @agentic-hub/desktop --filter @agentic-hub/web lint",
+    "fe:test": "pnpm --filter @agentic-hub/ui test",
+    "fe:build": "pnpm --filter @agentic-hub/desktop --filter @agentic-hub/web build",
+    "fe:check": "pnpm fe:typecheck && pnpm fe:lint && pnpm fe:test && pnpm fe:build"
+  }
+}

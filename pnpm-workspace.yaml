@@ -1,0 +1,6 @@
+# Integration scaffolding (created by the frontend branch because no root
+# workspace existed yet). Globs cover backend-owned packages too, so the
+# backend branch can merge this file by keeping the union of entries.
+packages:
+  - "apps/*"
+  - "packages/*"

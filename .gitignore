@@ -1,0 +1,12 @@
+node_modules
+dist
+.next
+out
+coverage
+*.tsbuildinfo
+next-env.d.ts
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+.DS_Store
+.env*.local
+.gstack/
