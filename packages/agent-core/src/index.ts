@@ -1,22 +1,57 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import type { AgentCapabilities, AgentConfig, AgentEvent, AgentProvider, ApprovalDecision, NewAgentEvent, ProviderInfo, Session, Task, TaskRun } from '@agentic-hub/types';
+import type { AgentConfig, AgentEvent, AgentProvider, ApprovalDecision, ModelInfo, NewAgentEvent, NewStreamDelta, AgentCapabilities, ProviderInfo, Session, StreamDelta, Task, TaskRun } from '@agentic-hub/types';
 import { Store, redactStoredText } from '@agentic-hub/database';
 
 export interface AdapterSession {
   readonly providerSessionId: string | null;
   send(text: string): Promise<void>;
   subscribe(listener: (event: NewAgentEvent) => void): () => void;
+  /** Ephemeral partial text. The complete message event that follows is authoritative. */
+  subscribeDeltas?(listener: (delta: NewStreamDelta) => void): () => void;
   cancel(): Promise<void>;
   resolveApproval(id: string, decision: ApprovalDecision): Promise<void>;
   cleanup(): Promise<void>;
+}
+
+export interface StartInput {
+  cwd: string;
+  config: AgentConfig;
+  providerSessionId: string | null;
+  /** Earlier turns of this session, oldest first. Stateless API providers resend them. */
+  history: { role: 'user' | 'assistant'; text: string }[];
 }
 
 export interface AgentAdapter {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilities;
   readiness(): Promise<ProviderInfo>;
-  start(input: { cwd: string; config: AgentConfig; providerSessionId: string | null }): Promise<AdapterSession>;
+  start(input: StartInput): Promise<AdapterSession>;
+  /** Models the provider currently offers. Only called when `capabilities.modelDiscovery`. */
+  models?(): Promise<ModelInfo[]>;
+}
+
+/** Where API-key providers read their key. Implemented by the runtime over the encrypted store and environment. */
+export interface CredentialSource {
+  get(provider: AgentProvider): { apiKey: string; source: 'stored' | 'environment' } | null;
+}
+
+/** `sk-…abcd`: enough to recognise a key without revealing it. */
+export function credentialHint(apiKey: string): string {
+  const prefix = /^(sk-ant-|sk-proj-|sk-)/.exec(apiKey)?.[0] ?? '';
+  return `${prefix}…${apiKey.slice(-4)}`;
+}
+
+/** Turns provider SDK errors into short, credential-free messages. */
+export function providerErrorMessage(error: unknown, provider: string): string {
+  const status = typeof error === 'object' && error && 'status' in error ? Number((error as { status: unknown }).status) : NaN;
+  if (status === 401) return `${provider} rejected the API key. Update it in Settings → Providers.`;
+  if (status === 403) return `${provider} denied access for this API key or model.`;
+  if (status === 404) return `${provider} could not find that model.`;
+  if (status === 429) return `${provider} rate limit or quota exceeded. Check your plan and billing.`;
+  if (status >= 500) return `${provider} is temporarily unavailable (${status}).`;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, '[REDACTED]').slice(0, 500) || `${provider} request failed`;
 }
 
 export class HubError extends Error {
@@ -25,31 +60,76 @@ export class HubError extends Error {
 
 export class AgentRegistry {
   private adapters = new Map<AgentProvider, AgentAdapter>();
+  private cache = new Map<AgentProvider, { at: number; value: Promise<ProviderInfo> }>();
+  private models = new Map<AgentProvider, { at: number; value: Promise<ModelInfo[]> }>();
+  /** CLI readiness checks spawn processes, so results are reused briefly. */
+  constructor(private readonly ttlMs = 15_000) {}
   register(adapter: AgentAdapter): void { this.adapters.set(adapter.provider, adapter); }
   get(provider: AgentProvider): AgentAdapter {
     const adapter = this.adapters.get(provider);
     if (!adapter) throw new HubError('PROVIDER_UNAVAILABLE', 503, `${provider} is unavailable`);
     return adapter;
   }
-  async list(): Promise<ProviderInfo[]> { return Promise.all([...this.adapters.values()].map(a => a.readiness())); }
+  has(provider: AgentProvider): boolean { return this.adapters.has(provider); }
+  readiness(provider: AgentProvider, fresh = false): Promise<ProviderInfo> {
+    const adapter = this.get(provider);
+    const hit = this.cache.get(provider);
+    if (!fresh && hit && Date.now() - hit.at < this.ttlMs) return hit.value;
+    const value = adapter.readiness();
+    this.cache.set(provider, { at: Date.now(), value });
+    value.catch(() => this.cache.delete(provider));
+    return value;
+  }
+  async list(fresh = false): Promise<ProviderInfo[]> { return Promise.all([...this.adapters.keys()].map(p => this.readiness(p, fresh))); }
+  /** Forget cached readiness and models, e.g. after a credential change. */
+  invalidate(provider?: AgentProvider): void {
+    if (provider) { this.cache.delete(provider); this.models.delete(provider); }
+    else { this.cache.clear(); this.models.clear(); }
+  }
+  async listModels(provider: AgentProvider): Promise<ModelInfo[]> {
+    const adapter = this.get(provider);
+    if (!adapter.capabilities.modelDiscovery || !adapter.models) throw new HubError('UNSUPPORTED_ACTION', 422, `${provider} does not support model discovery`);
+    const info = await this.readiness(provider);
+    if (!info.ready) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
+    const hit = this.models.get(provider);
+    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
+    const value = adapter.models();
+    this.models.set(provider, { at: Date.now(), value });
+    value.catch(() => this.models.delete(provider));
+    try { return await value; }
+    catch (error) { throw new HubError('PROVIDER_UNAVAILABLE', 503, providerErrorMessage(error, info.displayName)); }
+  }
 }
 
 type Active = { adapter: AdapterSession; runId: string; unsubscribe: () => void; finished: boolean; cancelRequested: boolean };
+export type SessionListener = (event: AgentEvent) => void;
+export type DeltaListener = (delta: StreamDelta) => void;
 
 export class SessionManager {
   private active = new Map<string, Active>();
   private starting = new Set<string>();
   private bus = new EventEmitter();
   constructor(readonly store: Store, readonly registry: AgentRegistry) { this.bus.setMaxListeners(0); }
-  subscribe(sessionId: string, listener: (event: AgentEvent) => void): () => void {
+  subscribe(sessionId: string, listener: SessionListener): () => void {
     this.bus.on(sessionId, listener);
     return () => this.bus.off(sessionId, listener);
   }
+  /** Ephemeral deltas for one session. */
+  subscribeDeltas(sessionId: string, listener: DeltaListener): () => void {
+    this.bus.on(`${sessionId}:delta`, listener);
+    return () => this.bus.off(`${sessionId}:delta`, listener);
+  }
+  /** Every persisted event of every session, e.g. for the control-plane connector. */
+  subscribeAll(listener: SessionListener): () => void {
+    this.bus.on('*', listener);
+    return () => this.bus.off('*', listener);
+  }
+  isActive(sessionId: string): boolean { return this.active.has(sessionId) || this.starting.has(sessionId); }
   async create(projectId: string, config: AgentConfig): Promise<Session> {
     const project = this.store.project(projectId);
     if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
     const adapter = this.registry.get(config.provider);
-    const info = await adapter.readiness();
+    const info = await this.registry.readiness(config.provider);
     if (!info.ready || !adapter.capabilities.execution) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
     const now = new Date().toISOString();
     const session: Session = { id: randomUUID(), projectId, config, status: 'idle', providerSessionId: null, createdAt: now, updatedAt: now };
@@ -65,9 +145,15 @@ export class SessionManager {
       const project = this.store.project(session.projectId);
       if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
       const adapter = this.registry.get(session.config.provider);
-      const info = await adapter.readiness();
+      const info = await this.registry.readiness(session.config.provider);
       if (!info.ready) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
-      const instance = await adapter.start({ cwd: project.path, config: session.config, providerSessionId: session.providerSessionId });
+      let instance: AdapterSession;
+      try {
+        instance = await adapter.start({ cwd: project.path, config: session.config, providerSessionId: session.providerSessionId, history: this.store.transcript(sessionId) });
+      } catch (error) {
+        if (error instanceof HubError) throw error;
+        throw new HubError('PROVIDER_UNAVAILABLE', 503, providerErrorMessage(error, info.displayName));
+      }
       const now = new Date().toISOString();
       const task: Task = { id: randomUUID(), sessionId, prompt: redactStoredText(text), createdAt: now };
       const run: TaskRun = { id: randomUUID(), taskId: task.id, sessionId, status: 'running', startedAt: now, finishedAt: null, error: null };
@@ -75,10 +161,14 @@ export class SessionManager {
       this.store.saveRun(run);
       this.setStatus(sessionId, 'running', instance.providerSessionId);
       const active: Active = { adapter: instance, runId: run.id, unsubscribe: () => {}, finished: false, cancelRequested: false };
-      active.unsubscribe = instance.subscribe(event => this.accept(sessionId, active, event));
+      const offEvents = instance.subscribe(event => this.accept(sessionId, active, event));
+      const offDeltas = instance.subscribeDeltas?.(delta => {
+        if (!active.finished && this.active.get(sessionId) === active) this.bus.emit(`${sessionId}:delta`, { ...delta, sessionId, taskRunId: run.id });
+      }) ?? (() => {});
+      active.unsubscribe = () => { offEvents(); offDeltas(); };
       this.active.set(sessionId, active);
       this.append(sessionId, run.id, { type: 'message', role: 'user', text });
-      void instance.send(text).then(() => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'completed', null)).catch(error => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'failed', active.cancelRequested ? null : error instanceof Error ? error.message : 'Provider failed'));
+      void instance.send(text).then(() => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'completed', null)).catch(error => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'failed', active.cancelRequested ? null : providerErrorMessage(error, info.displayName)));
       return { task, run };
     } finally {
       this.starting.delete(sessionId);
@@ -87,6 +177,7 @@ export class SessionManager {
   private append(sessionId: string, runId: string, event: NewAgentEvent): AgentEvent {
     const full = this.store.appendEvent(sessionId, runId, event);
     this.bus.emit(sessionId, full);
+    this.bus.emit('*', full);
     return full;
   }
   private setStatus(id: string, status: Session['status'], providerSessionId?: string | null): Session {
@@ -156,11 +247,4 @@ export class SessionManager {
     }));
     this.store.close();
   }
-}
-
-export class MuseAdapter implements AgentAdapter {
-  readonly provider = 'muse';
-  readonly capabilities: AgentCapabilities = { execution: false, streaming: false, interactiveMessages: false, approvals: false, cancellation: false, gitDiff: true };
-  async readiness(): Promise<ProviderInfo> { return { provider: this.provider, displayName: 'Muse Code', capabilities: this.capabilities, installed: false, authenticated: false, ready: false, reason: 'Muse integration is not implemented' }; }
-  async start(): Promise<AdapterSession> { throw new HubError('UNSUPPORTED_ACTION', 422, 'Muse execution is not implemented'); }
 }

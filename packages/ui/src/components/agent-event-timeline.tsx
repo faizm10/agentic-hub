@@ -2,7 +2,7 @@
 
 import { CircleAlert, Info, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import type { ApprovalDecision, RunStatus, TimelineItem } from "../model/types";
+import type { AgentId, ApprovalDecision, RunStatus, TimelineItem } from "../model/types";
 import { cn } from "../lib/cn";
 import { Button } from "../primitives/button";
 import { ApprovalRequestCard } from "./approval-request-card";
@@ -12,6 +12,8 @@ import { ToolExecutionCard } from "./tool-execution-card";
 
 export interface AgentEventTimelineProps {
   items: TimelineItem[];
+  /** Shown beside assistant messages. */
+  agentId?: AgentId;
   status?: RunStatus;
   loading?: boolean;
   onResolveApproval?: (approvalId: string, decision: ApprovalDecision) => Promise<unknown>;
@@ -23,18 +25,20 @@ export interface AgentEventTimelineProps {
 
 function TimelineRow({
   item,
+  agentId,
   onResolveApproval,
   approvalUnavailableReason,
   onRetry,
 }: {
   item: TimelineItem;
+  agentId?: AgentId;
   onResolveApproval?: AgentEventTimelineProps["onResolveApproval"];
   approvalUnavailableReason?: string;
   onRetry?: () => void;
 }) {
   switch (item.kind) {
     case "message":
-      return <ChatMessage message={item} />;
+      return <ChatMessage message={item} agentId={agentId} />;
     case "reasoning":
       return <ReasoningSummary item={item} />;
     case "tool":
@@ -81,10 +85,10 @@ function TimelineRow({
 function WorkingIndicator({ status }: { status: RunStatus }) {
   const label = status === "queued" ? "Queued" : status === "cancelling" ? "Cancelling…" : "Working";
   return (
-    <div className="flex items-center gap-2 text-xs text-fg-subtle" role="status" aria-live="polite">
+    <div className="flex items-center gap-2.5 pl-0.5 text-sm text-fg-subtle" role="status" aria-live="polite">
       <span className="flex gap-1">
         {[0, 1, 2].map((i) => (
-          <span key={i} className="size-1 rounded-full bg-fg-subtle animate-pulse-dot" style={{ animationDelay: `${i * 160}ms` }} />
+          <span key={i} className="size-1.5 rounded-full bg-fg-subtle animate-pulse-dot" style={{ animationDelay: `${i * 160}ms` }} />
         ))}
       </span>
       {label}
@@ -95,6 +99,7 @@ function WorkingIndicator({ status }: { status: RunStatus }) {
 /** Scrollable stream of messages, reasoning, tool calls and approvals with stick-to-bottom behaviour. */
 export function AgentEventTimeline({
   items,
+  agentId,
   status,
   loading,
   onResolveApproval,
@@ -128,7 +133,7 @@ export function AgentEventTimeline({
   return (
     <div ref={scrollRef} className={cn("min-h-0 flex-1 overflow-y-auto", className)}>
       <div
-        className="mx-auto flex w-full max-w-[52rem] flex-col gap-4 px-5 py-6"
+        className="mx-auto flex w-full max-w-[48rem] flex-col gap-6 px-4 py-8 sm:px-6"
         role="log"
         aria-live="polite"
         aria-relevant="additions"
@@ -136,7 +141,7 @@ export function AgentEventTimeline({
       >
         {loading ? (
           <>
-            <div className="ml-auto h-12 w-2/5 rounded-xl skeleton" />
+            <div className="ml-auto h-11 w-2/5 rounded-3xl skeleton" />
             <MessageSkeleton />
             <div className="h-8 w-3/5 rounded-lg skeleton" />
             <MessageSkeleton className="w-4/5" />
@@ -148,6 +153,7 @@ export function AgentEventTimeline({
             <div key={item.id} className="animate-in fade-in-0 slide-in-from-bottom-1 duration-200">
               <TimelineRow
                 item={item}
+                agentId={agentId}
                 onResolveApproval={onResolveApproval}
                 approvalUnavailableReason={approvalUnavailableReason}
                 onRetry={onRetry}

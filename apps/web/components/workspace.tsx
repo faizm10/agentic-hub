@@ -1,0 +1,464 @@
+"use client";
+
+import {
+  AgentEventTimeline,
+  AgentSelector,
+  AppShell,
+  Button,
+  ChatComposer,
+  CommandPalette,
+  DisconnectedState,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  EmptyState,
+  ErrorState,
+  ModelSelector,
+  NewChatHero,
+  ProjectSidebar,
+  ProviderSettings,
+  SessionHeader,
+  Skeleton,
+  ThemeToggle,
+  Tooltip,
+  safeStorage,
+  useMediaQuery,
+  useShortcuts,
+  type ChatComposerHandle,
+  type PaletteCommand,
+} from "@agentic-hub/ui";
+import {
+  ClientProvider,
+  RefetchOnReconnect,
+  errorMessage,
+  isUnavailable,
+  useAgents,
+  useCancelRun,
+  useConnection,
+  useCreateSession,
+  useModels,
+  useProjects,
+  useProviders,
+  useResolveApproval,
+  useSendMessage,
+  useSessionStream,
+  useSessions,
+  useSetApiKey,
+} from "@agentic-hub/ui/client";
+import { AGENT_DISPLAY, isRunActive, type AgentId } from "@agentic-hub/ui/model";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { KeyRound, LogOut, MessageSquare, Monitor, PanelLeft, Plus, Settings } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { CLOUD_PROJECT_ID, parseDeviceRef } from "@/lib/ids";
+import { createWebClient, type WebClient } from "@/lib/web-client";
+import { DevicesScreen } from "./devices-screen";
+
+type View = "chat" | "providers" | "devices" | "settings";
+interface Prefs {
+  projectId: string;
+  sessionId?: string;
+  agent: AgentId;
+  models: Partial<Record<AgentId, string>>;
+  sidebarOpen: boolean;
+}
+const PREFS_KEY = "agentic-hub.web.prefs.v1";
+const DEFAULT_PREFS: Prefs = { projectId: CLOUD_PROJECT_ID, agent: "anthropic", models: {}, sidebarOpen: true };
+
+function ScreenFrame({ title, toolbar, children }: { title: string; toolbar: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-2">
+        {toolbar}
+        <h1 className="px-1 text-sm font-medium text-fg">{title}</h1>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">{children}</div>
+      </div>
+    </>
+  );
+}
+
+function WorkspaceInner({ client, email }: { client: WebClient; email: string }) {
+  const router = useRouter();
+  const [prefs, setPrefsState] = useState<Prefs>(() => ({ ...DEFAULT_PREFS, ...safeStorage.get<Partial<Prefs>>(PREFS_KEY, {}) }));
+  const setPrefs = (patch: Partial<Prefs>) =>
+    setPrefsState((p) => {
+      const next = { ...p, ...patch };
+      safeStorage.set(PREFS_KEY, next);
+      return next;
+    });
+  const [view, setView] = useState<View>("chat");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const compact = useMediaQuery("(max-width: 899px)");
+  const [drawer, setDrawer] = useState(false);
+  const sidebarOpen = compact ? drawer : prefs.sidebarOpen;
+  const setSidebarOpen = (open: boolean) => (compact ? setDrawer(open) : setPrefs({ sidebarOpen: open }));
+
+  const connection = useConnection();
+  const projects = useProjects();
+  const sessions = useSessions();
+  const providers = useProviders();
+  const agents = useAgents();
+  const project = projects.data?.find((p) => p.id === prefs.projectId) ?? projects.data?.[0];
+  const cloud = project?.id === CLOUD_PROJECT_ID;
+  const snapshot = useSessionStream(view === "chat" ? prefs.sessionId : undefined);
+  const session = snapshot.data?.session;
+
+  const send = useSendMessage(prefs.sessionId);
+  const cancel = useCancelRun(prefs.sessionId);
+  const resolve = useResolveApproval(prefs.sessionId);
+  const create = useCreateSession();
+  const setKey = useSetApiKey();
+  const composerRef = useRef<ChatComposerHandle>(null);
+  const [errorState, setErrorState] = useState<{ key?: string; message: string } | null>(null);
+  const actionError = errorState && errorState.key === prefs.sessionId ? errorState.message : null;
+  const setActionError = (message: string | null) => setErrorState(message ? { key: prefs.sessionId, message } : null);
+
+  // Web chats offer model APIs with this account's keys; a computer's projects offer what that computer reports.
+  const deviceId = project && !cloud ? parseDeviceRef(project.id)?.deviceId : undefined;
+  const projectProviders = deviceId ? client.deviceProviders(deviceId) : providers.data;
+  const allowedAgents = (agents.data ?? []).filter((a) => (cloud ? a.kind === "model" : projectProviders?.some((p) => p.agentId === a.id)));
+  const firstReady = allowedAgents.find((a) => projectProviders?.find((p) => p.agentId === a.id)?.status === "ready");
+  const composerAgent = allowedAgents.some((a) => a.id === prefs.agent) && projectProviders?.find((p) => p.agentId === prefs.agent)?.status === "ready"
+    ? prefs.agent
+    : (firstReady?.id ?? allowedAgents[0]?.id ?? prefs.agent);
+  const agentProvider = projectProviders?.find((p) => p.agentId === composerAgent);
+  const modelsEnabled = cloud && agentProvider?.status === "ready";
+  const models = useModels(composerAgent, modelsEnabled);
+
+  useEffect(() => {
+    composerRef.current?.focus();
+  }, [prefs.sessionId, view]);
+
+  const newChat = () => {
+    setView("chat");
+    setPrefs({ sessionId: undefined });
+    setDrawer(false);
+  };
+  const signOut = async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    router.replace("/login");
+    router.refresh();
+  };
+
+  useShortcuts([
+    { keys: "mod+k", handler: () => setPaletteOpen((o) => !o) },
+    { keys: "mod+shift+o", handler: newChat },
+    { keys: "mod+b", handler: () => setSidebarOpen(!sidebarOpen) },
+    { keys: "mod+.", handler: () => cancel.mutate(), enabled: Boolean(session && isRunActive(session.status)) },
+    { keys: "mod+,", handler: () => setView("settings") },
+  ]);
+
+  const commands: PaletteCommand[] = [
+    { id: "new", group: "Actions", label: "New chat", icon: <Plus />, shortcut: "mod+shift+o", run: newChat },
+    { id: "providers", group: "Navigate", label: "Providers", icon: <KeyRound />, run: () => setView("providers") },
+    { id: "devices", group: "Navigate", label: "Devices", icon: <Monitor />, run: () => setView("devices") },
+    { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => setView("settings") },
+    ...(sessions.data ?? []).map((s) => ({
+      id: `s-${s.id}`,
+      group: "Chats",
+      label: s.title,
+      hint: AGENT_DISPLAY[s.agentId].name,
+      run: () => {
+        setView("chat");
+        setPrefs({ sessionId: s.id, projectId: s.projectId });
+      },
+    })),
+  ];
+
+  const toolbar = (
+    <Tooltip content={sidebarOpen ? "Hide sidebar" : "Show sidebar"} shortcut="mod+b">
+      <Button variant="ghost" size="icon" aria-label="Toggle sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}>
+        <PanelLeft />
+      </Button>
+    </Tooltip>
+  );
+
+  const accountMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="mt-1 flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-ring">
+        <span className="flex size-6 items-center justify-center rounded-full bg-fg text-2xs font-semibold uppercase text-bg">{email[0]}</span>
+        <span className="min-w-0 flex-1 truncate">{email}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" className="w-60">
+        <DropdownMenuLabel>{email}</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => setView("devices")}>
+          <Monitor /> Devices
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setView("settings")}>
+          <Settings /> Settings
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void signOut()}>
+          <LogOut /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const control = prefs.sessionId ? client.sessionControl(prefs.sessionId) : { allowed: true };
+
+  const chatMain = () => {
+    if (projects.isError) {
+      return isUnavailable(projects.error) ? (
+        <DisconnectedState title="Agentic Hub is unavailable" detail={errorMessage(projects.error)} onRetry={() => void projects.refetch()} />
+      ) : (
+        <ErrorState message={errorMessage(projects.error)} onRetry={() => void projects.refetch()} />
+      );
+    }
+    if (!prefs.sessionId) {
+      const blocked = !allowedAgents.length
+        ? "This computer hasn't reported any agents yet."
+        : agentProvider && agentProvider.status !== "ready"
+          ? agentProvider.detail ?? `${AGENT_DISPLAY[composerAgent].name} isn't ready.`
+          : deviceId
+            ? client.deviceControl(deviceId).reason
+            : undefined;
+      const kind = AGENT_DISPLAY[composerAgent].kind;
+      return (
+        <>
+          <header className="flex h-12 shrink-0 items-center gap-2 px-2">{toolbar}</header>
+          <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto pb-[6vh]">
+            {projects.isPending ? (
+              <Skeleton className="mx-auto h-24 w-full max-w-xl rounded-3xl" />
+            ) : (
+              <>
+                <NewChatHero
+                  kind={kind}
+                  title={cloud ? "What’s on your mind?" : "What should we build today?"}
+                  subtitle={project && !cloud ? <span className="font-mono text-xs">{project.path}</span> : undefined}
+                  onSuggestion={blocked ? undefined : (prompt) => composerRef.current?.setText(prompt)}
+                  className="mb-8"
+                />
+                <ChatComposer
+                  ref={composerRef}
+                  placeholder={`Message ${AGENT_DISPLAY[composerAgent].name}…`}
+                  disabledReason={blocked}
+                  toolbar={
+                    <>
+                      <AgentSelector
+                        agents={allowedAgents}
+                        providers={projectProviders}
+                        value={composerAgent}
+                        onChange={(agent) => setPrefs({ agent })}
+                        onManageProviders={() => setView("providers")}
+                        disabled={!allowedAgents.length}
+                      />
+                      {cloud ? (
+                        <ModelSelector
+                          models={models.data}
+                          value={prefs.models[composerAgent]}
+                          loading={models.isLoading}
+                          error={models.isError ? `Couldn't list models: ${errorMessage(models.error)}` : undefined}
+                          disabled={!modelsEnabled}
+                          onChange={(id) => setPrefs({ models: { ...prefs.models, [composerAgent]: id } })}
+                        />
+                      ) : null}
+                    </>
+                  }
+                  footer={
+                    actionError ? (
+                      <span className="text-danger">{actionError}</span>
+                    ) : blocked && agentProvider?.status !== "ready" && cloud ? (
+                      <button type="button" className="text-warning hover:underline" onClick={() => setView("providers")}>
+                        Add your {AGENT_DISPLAY[composerAgent].name} API key →
+                      </button>
+                    ) : cloud ? (
+                      <span>Runs on Agentic Hub with your {AGENT_DISPLAY[composerAgent].name} key. Can&rsquo;t see your files.</span>
+                    ) : (
+                      <span>Runs on your computer. It may ask for approvals here or in the desktop app.</span>
+                    )
+                  }
+                  onSubmit={async (prompt) => {
+                    if (!project) return;
+                    setActionError(null);
+                    try {
+                      const created = await create.mutateAsync({ projectId: project.id, agentId: composerAgent, model: cloud ? prefs.models[composerAgent] : undefined, prompt });
+                      setPrefs({ sessionId: created.id, projectId: project.id });
+                    } catch (e) {
+                      setActionError(errorMessage(e));
+                      throw e;
+                    }
+                  }}
+                />
+              </>
+            )}
+          </div>
+        </>
+      );
+    }
+    if (snapshot.isError) {
+      return (
+        <>
+          <SessionHeader project={project} leading={toolbar} />
+          <ErrorState title="Couldn't load this chat" message={errorMessage(snapshot.error)} onRetry={() => void snapshot.refetch()} />
+        </>
+      );
+    }
+    const running = session ? isRunActive(session.status) : false;
+    return (
+      <>
+        <SessionHeader session={session} project={project} onCancel={() => cancel.mutate()} cancelUnavailableReason={control.allowed ? undefined : control.reason} leading={toolbar} />
+        <AgentEventTimeline
+          items={snapshot.data?.timeline ?? []}
+          agentId={session?.agentId}
+          status={session?.status}
+          loading={snapshot.isPending}
+          approvalUnavailableReason={control.allowed ? undefined : control.reason}
+          onResolveApproval={control.allowed ? (approvalId, decision) => resolve.mutateAsync({ approvalId, decision }) : undefined}
+          empty={<EmptyState icon={<MessageSquare />} title="No messages yet" />}
+        />
+        <ChatComposer
+          ref={composerRef}
+          running={running}
+          onCancel={control.allowed ? () => cancel.mutate() : undefined}
+          disabledReason={control.allowed ? undefined : control.reason}
+          placeholder="Send a follow-up…"
+          footer={actionError ? <span className="text-danger">{actionError}</span> : cancel.isError ? <span className="text-danger">{errorMessage(cancel.error)}</span> : null}
+          onSubmit={async (text) => {
+            setActionError(null);
+            try {
+              await send.mutateAsync(text);
+            } catch (e) {
+              setActionError(errorMessage(e));
+              throw e;
+            }
+          }}
+        />
+      </>
+    );
+  };
+
+  const main = (() => {
+    switch (view) {
+      case "providers":
+        return (
+          <ScreenFrame title="Providers" toolbar={toolbar}>
+            {agents.data && providers.data ? (
+              <ProviderSettings
+                agents={agents.data}
+                providers={providers.data}
+                apiKey={(agentId) =>
+                  AGENT_DISPLAY[agentId].kind === "model"
+                    ? { onSave: (apiKey) => setKey.mutateAsync({ agentId, apiKey }), onClear: () => setKey.mutateAsync({ agentId, apiKey: null }) }
+                    : { onSave: () => Promise.reject(new Error("Coding agents sign in on your computer.")), onClear: () => Promise.resolve() }
+                }
+                onRecheck={() => void providers.refetch()}
+                rechecking={providers.isFetching}
+              />
+            ) : providers.isError ? (
+              <ErrorState message={errorMessage(providers.error)} onRetry={() => void providers.refetch()} />
+            ) : (
+              <div className="space-y-4">
+                {[0, 1].map((i) => (
+                  <Skeleton key={i} className="h-44 rounded-2xl" />
+                ))}
+              </div>
+            )}
+          </ScreenFrame>
+        );
+      case "devices":
+        return (
+          <ScreenFrame title="Devices" toolbar={toolbar}>
+            <DevicesScreen client={client} />
+          </ScreenFrame>
+        );
+      case "settings":
+        return (
+          <ScreenFrame title="Settings" toolbar={toolbar}>
+            <div className="space-y-8">
+              <section>
+                <h2 className="mb-2 text-sm font-semibold text-fg">Appearance</h2>
+                <ThemeToggle />
+              </section>
+              <section>
+                <h2 className="mb-1 text-sm font-semibold text-fg">Account</h2>
+                <p className="mb-3 text-sm text-fg-muted">Signed in as {email}.</p>
+                <Button size="sm" onClick={() => void signOut()}>
+                  <LogOut /> Sign out
+                </Button>
+              </section>
+              <section>
+                <h2 className="mb-1 text-sm font-semibold text-fg">Privacy</h2>
+                <p className="text-sm text-fg-muted">
+                  API keys, chat content and data synced from your computers are encrypted at rest (AES-256-GCM). Keys are only decrypted on the server to call the provider and are never sent to your browser.
+                </p>
+              </section>
+            </div>
+          </ScreenFrame>
+        );
+      default:
+        return chatMain();
+    }
+  })();
+
+  return (
+    <div className="h-dvh">
+      <AppShell
+        layoutId="web"
+        sidebarOpen={sidebarOpen}
+        inspectorOpen={false}
+        onSidebarOpenChange={setSidebarOpen}
+        onInspectorOpenChange={() => {}}
+        sidebar={
+          <ProjectSidebar
+            header={<div className="h-3" />}
+            projects={projects.data ?? []}
+            sessions={sessions.data ?? []}
+            providers={providers.data}
+            connection={connection}
+            connectedLabel="Synced"
+            loading={sessions.isPending && !sessions.isError}
+            sessionsUnavailable={sessions.isError ? errorMessage(sessions.error) : undefined}
+            activeProjectId={project?.id}
+            activeSessionId={view === "chat" ? prefs.sessionId : undefined}
+            onSelectProject={(projectId) => {
+              setView("chat");
+              setPrefs({ projectId, sessionId: undefined });
+            }}
+            onSelectSession={(id) => {
+              setView("chat");
+              setPrefs({ sessionId: id, projectId: sessions.data?.find((s) => s.id === id)?.projectId ?? prefs.projectId });
+              setDrawer(false);
+            }}
+            onNewSession={newChat}
+            onOpenRepository={() => setView("devices")}
+            onOpenSettings={() => setView("settings")}
+            onOpenProviders={() => setView("providers")}
+            footer={accountMenu}
+          />
+        }
+        main={main}
+        inspector={null}
+      />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} />
+    </div>
+  );
+}
+
+export function Workspace({ email }: { email: string }) {
+  const router = useRouter();
+  const [{ client, queryClient }] = useState(() => ({
+    client: createWebClient({ onUnauthorized: () => router.replace("/login") }),
+    queryClient: new QueryClient({
+      defaultOptions: { queries: { retry: (n, e) => (e as { status?: number })?.status !== 401 && (e as { code?: string })?.code !== "RUNTIME_UNAVAILABLE" && n < 2, refetchOnWindowFocus: true } },
+    }),
+  }));
+  // Devices sync every few seconds while someone is watching; keep lists fresh.
+  useEffect(() => {
+    const timer = setInterval(() => void queryClient.invalidateQueries({ queryKey: ["sessions"] }), 15_000);
+    return () => clearInterval(timer);
+  }, [queryClient]);
+  return (
+    <ClientProvider client={client}>
+      <QueryClientProvider client={queryClient}>
+        <RefetchOnReconnect />
+        <WorkspaceInner client={client} email={email} />
+      </QueryClientProvider>
+    </ClientProvider>
+  );
+}

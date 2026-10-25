@@ -50,8 +50,8 @@ export function SessionListItem({
       onClick={() => onSelect?.(session.id)}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors focus-ring",
-        active ? "bg-surface-3 text-fg" : "text-fg-muted hover:bg-surface-2 hover:text-fg",
+        "group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors focus-ring",
+        active ? "bg-surface-3 text-fg" : "text-fg-muted hover:bg-surface-3/70 hover:text-fg",
       )}
     >
       <AgentMark agentId={session.agentId} size="sm" />
@@ -92,14 +92,14 @@ export function SessionList({
   }, [sessions, grouping, projects, filter]);
 
   if (groups.length === 0) {
-    return <p className="px-2 py-6 text-center text-xs text-fg-subtle">{filter ? "No sessions match." : "No sessions yet."}</p>;
+    return <p className="px-2 py-6 text-center text-xs text-fg-subtle">{filter ? "No chats match." : "No chats yet. Start one above."}</p>;
   }
 
   return (
     <nav aria-label="Sessions" className={cn("space-y-4", className)}>
       {groups.map((group) => (
         <div key={group.key} role="group" aria-label={group.label}>
-          <div className="px-2 pb-1 text-2xs font-medium text-fg-subtle">{group.label}</div>
+          <div className="px-2.5 pb-1 text-2xs font-medium text-fg-subtle">{group.label}</div>
           <div className="space-y-px">
             {group.sessions.map((session) => (
               <SessionListItem

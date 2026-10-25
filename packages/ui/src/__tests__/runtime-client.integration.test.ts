@@ -10,7 +10,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentRegistry, MuseAdapter, SessionManager, type AdapterSession, type AgentAdapter } from "@agentic-hub/agent-core";
+import { AgentRegistry, SessionManager, type AdapterSession, type AgentAdapter } from "@agentic-hub/agent-core";
+import { MuseAdapter } from "@agentic-hub/agent-muse";
 import { Store } from "@agentic-hub/database";
 import { createRuntimeServer } from "@agentic-hub/runtime/dist/server.js";
 import type { AgentCapabilities, AgentProvider, ApprovalDecision, NewAgentEvent, ProviderInfo } from "@agentic-hub/types";
@@ -123,7 +124,7 @@ async function setup() {
   const registry = new AgentRegistry();
   registry.register(codex);
   registry.register(new ScriptedAdapter("claude", repo, false));
-  registry.register(new MuseAdapter());
+  registry.register(new MuseAdapter("/nonexistent/muse"));
   const manager = new SessionManager(store, registry);
   const server = createRuntimeServer(store, registry, manager, "secret-token");
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

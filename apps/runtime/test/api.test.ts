@@ -2,7 +2,8 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentRegistry, MuseAdapter, SessionManager } from '@agentic-hub/agent-core';
+import { AgentRegistry, SessionManager } from '@agentic-hub/agent-core';
+import { MuseAdapter } from '@agentic-hub/agent-muse';
 import type { AgentAdapter, AdapterSession } from '@agentic-hub/agent-core';
 import type { AgentCapabilities, NewAgentEvent, ProviderInfo } from '@agentic-hub/types';
 import { randomUUID } from 'node:crypto';
@@ -15,7 +16,7 @@ afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { re
 it('enforces bearer auth and validates request bodies', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'agentic-hub-api-')); dirs.push(dir);
   const store = new Store(join(dir, 'db.sqlite'));
-  const registry = new AgentRegistry(); registry.register(new MuseAdapter());
+  const registry = new AgentRegistry(); registry.register(new MuseAdapter('/nonexistent/muse'));
   const manager = new SessionManager(store, registry);
   const server = createRuntimeServer(store, registry, manager, 'secret');
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

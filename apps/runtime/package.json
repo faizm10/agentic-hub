@@ -1,1 +1,34 @@
-{"name":"@agentic-hub/runtime","version":"0.1.0","private":true,"type":"module","main":"./dist/index.js","scripts":{"build":"tsc -p tsconfig.json","typecheck":"tsc -p tsconfig.json --noEmit","test":"vitest run --passWithNoTests","lint":"tsc -p tsconfig.json --noEmit","start":"node dist/index.js","dev":"tsx src/index.ts"},"dependencies":{"@agentic-hub/types":"workspace:*","@agentic-hub/database":"workspace:*","@agentic-hub/git":"workspace:*","@agentic-hub/agent-core":"workspace:*","@agentic-hub/agent-codex":"workspace:*","@agentic-hub/agent-claude":"workspace:*","zod":"^3.25.0"},"devDependencies":{"tsx":"^4.20.0"}}
+{
+  "name": "@agentic-hub/runtime",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "bundle": "node bundle.mjs"
+  },
+  "dependencies": {
+    "@agentic-hub/agent-api": "workspace:*",
+    "@agentic-hub/agent-claude": "workspace:*",
+    "@agentic-hub/agent-codex": "workspace:*",
+    "@agentic-hub/agent-core": "workspace:*",
+    "@agentic-hub/agent-muse": "workspace:*",
+    "@agentic-hub/database": "workspace:*",
+    "@agentic-hub/git": "workspace:*",
+    "@agentic-hub/types": "workspace:*",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "tsx": "^4.20.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -37,7 +37,7 @@ import { useAppState } from "./state/app-state";
 /** Space for macOS traffic lights when the native title bar is overlaid. */
 function TitlebarSpacer() {
   const overlay = isTauri() && platform.isMac;
-  return <div data-tauri-drag-region className={overlay ? "h-10 shrink-0" : "h-2 shrink-0"} />;
+  return <div data-tauri-drag-region className={overlay ? "h-11 shrink-0" : "h-3 shrink-0"} />;
 }
 
 export function Shell() {
@@ -102,10 +102,10 @@ export function Shell() {
 
   const commands = useMemo<PaletteCommand[]>(() => {
     const list: PaletteCommand[] = [
-      { id: "new", group: "Actions", label: "New session", icon: <Plus />, shortcut: "mod+n", run: newSession, disabled: !activeProject },
+      { id: "new", group: "Actions", label: "New chat", icon: <Plus />, shortcut: "mod+n", run: newSession, disabled: !activeProject },
       { id: "open", group: "Actions", label: "Open repository…", icon: <FolderOpen />, shortcut: "mod+o", run: () => navigate("repositories") },
       { id: "review", group: "Actions", label: "Review changes", icon: <FileDiff />, shortcut: "mod+shift+d", run: () => openReview(), disabled: !snapshot.data?.changes.length },
-      { id: "history", group: "Navigate", label: "Session history", icon: <History />, shortcut: "mod+y", run: () => navigate("history") },
+      { id: "history", group: "Navigate", label: "All chats", icon: <History />, shortcut: "mod+y", run: () => navigate("history") },
       { id: "providers", group: "Navigate", label: "Providers", icon: <KeyRound />, run: () => navigate("providers") },
       { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => navigate("settings") },
       { id: "sidebar", group: "View", label: "Toggle sidebar", icon: <PanelLeft />, shortcut: "mod+b", run: () => setSidebarOpen(!sidebarOpen) },
@@ -212,7 +212,7 @@ export function Shell() {
             providers={providers.data}
             connection={connection}
             loading={sessions.isPending && !sessions.isError}
-            sessionsUnavailable={sessions.isError ? "Sessions are unavailable while the runtime is offline." : undefined}
+            sessionsUnavailable={sessions.isError ? "Chats are unavailable while the runtime is offline." : undefined}
             activeProjectId={activeProject?.id}
             activeSessionId={view === "workspace" ? prefs.activeSessionId : undefined}
             onSelectProject={(id) => setPrefs({ activeProjectId: id })}

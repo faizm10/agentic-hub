@@ -28,7 +28,7 @@ pnpm fe:check                            # typecheck + lint + tests + builds
 
 `fe:typecheck`, `fe:lint`, `fe:test` and `fe:build` run each step on its own.
 
-## Data sources: demo vs live
+## Data sources
 
 Every screen reads data through one interface, `AgentHubClient`
 (`packages/ui/src/client/types.ts`). Components never call `fetch` or Tauri
@@ -36,13 +36,10 @@ Every screen reads data through one interface, `AgentHubClient`
 
 | Client | Where | Behaviour |
 | --- | --- | --- |
-| `createDemoClient()` | `packages/ui/src/fixtures` | Sample data plus scripted event replays. Reports `mode: "demo"`, so shells show a persistent **Demo mode** banner. Every replay opens with a notice that no agent is running and nothing on disk changes. |
-| `createRuntimeClient()` | `packages/ui/src/client/runtime-client.ts` | Live client over the runtime's v1 HTTP API and bearer-authenticated `fetch` SSE. `client/adapters.ts` maps `@agentic-hub/types` onto the view model. While the runtime is unreachable, calls reject with `RuntimeUnavailableError` and the connection reports `disconnected`. A probe retries on its own, and `<RefetchOnReconnect />` reloads data once the runtime is back. |
-| `createUnavailableClient()` | `packages/ui/src/client` | Used where no live transport exists: the web dashboard (no paired control plane) and packaged Tauri builds (no native bridge yet). Every call rejects with `RuntimeUnavailableError`. |
-
-- **Desktop:** the welcome screen asks whether to connect to the local runtime or explore demo data. You can switch later in Settings → Data source. Live mode calls `/runtime/*` on the Vite dev/preview server. `apps/desktop/runtime-bridge.ts` forwards those calls to `AGENTIC_HUB_RUNTIME_URL` (default `http://127.0.0.1:43117`) and attaches the bearer token read from the newest live `token-<pid>` file in `AGENTIC_HUB_DATA_DIR` (default `~/.agentic-hub`). The token never reaches page script. The bridge rejects non-loopback Hosts, cross-origin requests and cross-site requests.
-- **Web:** defaults to "Control plane — not connected", which shows the offline explainer. Demo data is opt-in from the header menu.
-- **Remote actions on the web** (start, cancel, approve) are always disabled with an explanation. `remoteActionsAvailable()` returns `false` until an authenticated control plane exists. The browser never talks to `localhost` or the filesystem.
+| `createRuntimeClient()` | `packages/ui/src/client/runtime-client.ts` | Live client over the runtime's HTTP API and SSE (including ephemeral `delta` records). In the desktop app it is given `tauriFetch` (`apps/desktop/src/platform/tauri-fetch.ts`), which routes requests and streams through the Rust bridge; in a browser preview it calls the Vite `/runtime` bridge. Either way the bearer token stays outside page script. |
+| `createWebClient()` | `apps/web/lib/web-client.ts` | The web app: web chats over `/api/chats` (server-side model calls, SSE back), and paired-computer sessions mirrored by the control plane, with actions queued as device commands. |
+| `createDemoClient()` | `packages/ui/src/fixtures` | Opt-in sample data ("Explore with sample data"). Reports `mode: "demo"` and is labeled everywhere; it never saves keys or pairs. |
+| `createUnavailableClient()` | `packages/ui/src/client` | Rejects every call with `RuntimeUnavailableError`, for hosts without a transport. |
 
 ## Architecture notes
 
@@ -53,7 +50,7 @@ Every screen reads data through one interface, `AgentHubClient`
 
 ## Desktop specifics
 
-- **Capabilities** (`src-tauri/capabilities/default.json`): `core:default`, window dragging, and `dialog:allow-open`, nothing else. There is no fs, shell or http plugin. The folder picker returns a path that is handed to the runtime via `addProject`.
+- **Capabilities** (`src-tauri/capabilities/default.json`): `core:default`, window dragging, and `dialog:allow-open`, plus the app's own `runtime_*` commands (`src-tauri/src/bridge.rs`), which only accept relative runtime API paths. There is no fs, shell or http plugin. The folder picker returns a path that is handed to the runtime via `addProject`.
 - **CSP** is strict (`script-src 'self'`). The pre-paint theme script is served as `public/theme-init.js`, not inline.
 - **Layout:** resizable, collapsible sidebar and review panel (`react-resizable-panels`), with sizes persisted per window. Under 900px both become overlay drawers that don't overwrite the desktop layout.
 - **Preferences** (theme, data source, open panels, default agent, last project and session) are stored in `localStorage`, behind try/catch.
@@ -64,11 +61,11 @@ Every screen reads data through one interface, `AgentHubClient`
 | Keys | Action |
 | --- | --- |
 | ⌘K | Command palette (sessions, projects, actions) |
-| ⌘N / ⌘O | New session / open repository |
+| ⌘N / ⌘O | New chat / open repository |
 | ⌘B / ⌘J | Toggle sidebar / review panel |
 | ⌘⇧D | Full-screen diff review |
 | ⌘. | Stop the active run |
-| ⌘1–3 | Pick Codex / Claude Code / Muse for a new session |
+| ⌘1–5 | Pick Codex / Claude Code / Muse Code / OpenAI / Anthropic for a new chat |
 | ⌘Y / ⌘, | History / settings |
 | ↵ / ⇧↵ | Send / newline |
 
@@ -79,8 +76,8 @@ There is deliberately no global "approve" shortcut, to prevent approving a comma
 Tokens live in `packages/ui/src/styles/tokens.css`: OKLCH CSS variables for
 light and dark, mapped into Tailwind v4 through `@theme inline`. The theme is
 `data-theme` on `<html>`, set before paint and driven by `ThemeProvider`
-(System, Light or Dark). Each agent has its own token (`--agent-codex`,
-`--agent-claude`, `--agent-muse`). Diffs use dedicated add/delete/hunk tokens.
+(System, Light or Dark). Each provider has its own token (`--agent-codex`,
+`--agent-claude`, `--agent-muse`, `--agent-openai`, `--agent-anthropic`). Code blocks are highlighted with highlight.js using token-driven colours. Diffs use dedicated add/delete/hunk tokens.
 Motion is minimal and respects `prefers-reduced-motion`.
 
 The diff viewer is a custom, lightweight unified/split viewer with no Monaco
@@ -113,11 +110,11 @@ Contract mapping, implemented in `packages/ui/src/client/adapters.ts`:
 
 Session titles and message counts are derived from the event log (the first user message), because the runtime has no title field.
 
-Not exposed by the runtime yet, and therefore not shown or kept read-only: provider models, approval policy, executable path and version, a settings write API, test results, risk levels on approvals, staging and discarding changes, devices and the activity feed.
+Not exposed by the runtime yet, and therefore not shown: approval policy, executable path, test results, risk levels on approvals, staging and discarding changes, and an activity feed across devices.
 
 ## Known limitations
 
-- The Tauri shell has not been compiled in this environment (no Rust toolchain). `tauri.conf.json` validates against the official v2 schema, and the Vite frontend builds and runs.
-- Live mode needs the Vite dev/preview server bridge. A packaged Tauri build reports the runtime as unavailable until a native launcher/bridge exists (it would spawn the runtime, read its token file, and proxy requests from Rust).
-- The web dashboard stays disconnected by design. The runtime contract requires an explicitly paired bridge for web clients, and none exists yet.
-- Without Tauri, the folder picker falls back to a manual path field that is clearly labeled.
+- Web users see synced copies of device sessions. Diffs and very large tool outputs stay on the computer.
+- Coding-agent model lists are shown in the desktop app; the web composer uses each computer's default model for them.
+- Claude `AskUserQuestion` prompts and Muse questions are not yet represented as approvals.
+- Without Tauri (browser preview), the folder picker falls back to a manual path field.

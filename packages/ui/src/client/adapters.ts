@@ -9,6 +9,8 @@ import type {
   ApprovalDecision as ContractApprovalDecision,
   ApprovalRequest,
   ChangedFile,
+  ModelInfo,
+  PairingStatus,
   Project as ContractProject,
   ProviderInfo,
   Session,
@@ -23,6 +25,8 @@ import type {
   ApprovalItem,
   FileChange,
   FileDiff,
+  ModelOption,
+  PairingInfo,
   Project,
   ProviderConfig,
   RunStatus,
@@ -32,17 +36,19 @@ import type {
 
 // ── Agents and providers ────────────────────────────────────────────────
 
-const AGENT_FOR_PROVIDER: Record<AgentProvider, AgentId> = { codex: "codex", claude: "claude-code", muse: "muse" };
-const PROVIDER_FOR_AGENT: Record<AgentId, AgentProvider> = { codex: "codex", "claude-code": "claude", muse: "muse" };
+const AGENT_FOR_PROVIDER: Record<AgentProvider, AgentId> = { codex: "codex", claude: "claude-code", muse: "muse", openai: "openai", anthropic: "anthropic" };
+const PROVIDER_FOR_AGENT: Record<AgentId, AgentProvider> = { codex: "codex", "claude-code": "claude", muse: "muse", openai: "openai", anthropic: "anthropic" };
 
 export const toAgentId = (provider: AgentProvider): AgentId => AGENT_FOR_PROVIDER[provider];
 export const toProvider = (agentId: AgentId): AgentProvider => PROVIDER_FOR_AGENT[agentId];
 
 /** Static product copy; availability and capabilities come from the runtime. */
 const AGENT_DESCRIPTION: Record<AgentId, string> = {
-  codex: "OpenAI Codex through its local App Server.",
-  "claude-code": "Anthropic Claude Code through the Claude Agent SDK.",
-  muse: "Muse Code. The runtime doesn't support running it yet.",
+  codex: "OpenAI's coding agent. Runs in your repository through its local App Server.",
+  "claude-code": "Anthropic's coding agent. Runs in your repository through the Claude Agent SDK.",
+  muse: "Meta's coding agent. Runs in your repository through the Muse Session Protocol.",
+  openai: "Chat with GPT models through the official OpenAI API. Doesn't touch your files.",
+  anthropic: "Chat with Claude models through the official Anthropic API. Doesn't touch your files.",
 };
 
 export function toAgentDescriptor(info: ProviderInfo): AgentDescriptor {
@@ -52,12 +58,22 @@ export function toAgentDescriptor(info: ProviderInfo): AgentDescriptor {
     name: AGENT_DISPLAY[id].name,
     vendor: AGENT_DISPLAY[id].vendor,
     description: AGENT_DESCRIPTION[id],
+    kind: info.kind ?? AGENT_DISPLAY[id].kind,
     capabilities: {
-      // Only the Codex adapter emits reasoning_summary events today.
-      reasoningSummaries: info.provider === "codex",
+      reasoningSummaries: info.provider !== "claude",
       toolApprovals: info.capabilities.approvals,
+      modelDiscovery: info.capabilities.modelDiscovery === true,
+      repositoryAccess: (info.kind ?? AGENT_DISPLAY[id].kind) === "agent",
     },
   };
+}
+
+export function toModelOption(model: ModelInfo): ModelOption {
+  return { id: model.id, name: model.displayName, description: model.description, isDefault: model.isDefault };
+}
+
+export function toPairingInfo(status: PairingStatus): PairingInfo {
+  return { ...status };
 }
 
 export function toProviderConfig(info: ProviderInfo): ProviderConfig {
@@ -71,7 +87,11 @@ export function toProviderConfig(info: ProviderInfo): ProviderConfig {
   return {
     agentId: toAgentId(info.provider),
     status,
-    authMethod: info.provider === "muse" ? "none" : "cli-login",
+    authMethod: info.authMethod === "api-key" ? "api-key" : "cli-login",
+    credential: info.credential ?? undefined,
+    setupUrl: info.setupUrl,
+    version: info.version,
+    defaultModel: info.defaultModel,
     availableModels: [],
     detail: info.reason,
   };

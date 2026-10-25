@@ -31,12 +31,12 @@ export function SessionHeader({
 }) {
   const active = session ? isRunActive(session.status) : false;
   return (
-    <header data-tauri-drag-region className={cn("flex h-11 shrink-0 items-center gap-3 border-b border-border", leading ? "pl-2 pr-3" : "px-4", className)}>
+    <header data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-3 border-b border-border/60", leading ? "pl-2 pr-3" : "px-4", className)}>
       {leading}
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         {session ? <AgentMark agentId={session.agentId} /> : null}
         <div className="flex min-w-0 items-baseline gap-2">
-          <h1 className="truncate text-sm font-medium text-fg">{session?.title ?? "New session"}</h1>
+          <h1 className="truncate text-sm font-medium text-fg">{session?.title ?? "New chat"}</h1>
           {project ? (
             <span className="hidden min-w-0 items-center gap-1 truncate text-xs text-fg-subtle md:inline-flex">
               <span className="truncate">{project.name}</span>

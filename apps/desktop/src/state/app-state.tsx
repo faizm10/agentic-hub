@@ -12,15 +12,18 @@ export interface Preferences {
   sidebarOpen: boolean;
   inspectorOpen: boolean;
   defaultAgent: AgentId;
+  /** Last model picked per agent; unset means the provider default. */
+  models: Partial<Record<AgentId, string>>;
 }
 
-const KEY = "agentic-hub.desktop.prefs";
+const KEY = "agentic-hub.desktop.prefs.v2";
 const DEFAULTS: Preferences = {
   onboarded: false,
-  dataMode: "demo",
+  dataMode: "live",
   sidebarOpen: true,
   inspectorOpen: true,
   defaultAgent: "claude-code",
+  models: {},
 };
 
 interface AppState {

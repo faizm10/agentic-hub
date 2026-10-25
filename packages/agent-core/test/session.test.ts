@@ -82,7 +82,7 @@ describe('session lifecycle', () => {
     expect(store.events(session.id).filter(event => event.type === 'completed')).toHaveLength(1);
     const { run } = await manager.send(session.id, 'new run');
     store.close();
-    const recovered = new Store(store.db.name);
+    const recovered = new Store(store.filename);
     expect(recovered.session(session.id)?.status).toBe('interrupted');
     expect(recovered.run(run.id)?.status).toBe('interrupted');
     recovered.close();

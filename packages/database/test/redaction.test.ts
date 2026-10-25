@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/index.js';
 
 it('does not persist common API key forms in tasks or events', async () => {
@@ -48,12 +48,29 @@ it('migrates an existing plaintext payload row on open', async () => {
   const first = new Store(filename);
   first.putProject(project);
   first.close();
-  const db = new Database(filename);
+  const db = new DatabaseSync(filename);
   db.prepare('UPDATE projects SET json=? WHERE id=?').run(JSON.stringify(project), projectId);
   db.close();
   const migrated = new Store(filename);
   expect(migrated.project(projectId)).toEqual(project);
   migrated.close();
   expect(await readFile(filename, 'utf8')).not.toContain('legacy-project');
+  await rm(dir, { recursive: true, force: true });
+});
+
+it('encrypts stored secrets at rest and reads them back', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agentic-hub-secret-'));
+  const filename = join(dir, 'db.sqlite');
+  const store = new Store(filename);
+  const apiKey = `sk-ant-${'z'.repeat(32)}`;
+  store.setSecret('provider:anthropic:apiKey', apiKey);
+  expect(store.secret('provider:anthropic:apiKey')).toBe(apiKey);
+  store.close();
+  expect(await readFile(filename, 'utf8').catch(() => '')).not.toContain(apiKey);
+  const reopened = new Store(filename);
+  expect(reopened.secret('provider:anthropic:apiKey')).toBe(apiKey);
+  reopened.deleteSecret('provider:anthropic:apiKey');
+  expect(reopened.secret('provider:anthropic:apiKey')).toBeNull();
+  reopened.close();
   await rm(dir, { recursive: true, force: true });
 });

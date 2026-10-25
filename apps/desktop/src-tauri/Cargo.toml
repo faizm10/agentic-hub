@@ -1,8 +1,9 @@
 [package]
 name = "agentic-hub-desktop"
-version = "0.1.0"
-description = "Agentic Hub desktop shell"
+version = "0.2.0"
+description = "Agentic Hub desktop app"
 edition = "2021"
+rust-version = "1.80"
 
 [lib]
 name = "agentic_hub_desktop_lib"
@@ -16,3 +17,14 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "time", "sync", "macros", "rt-multi-thread"] }
+# Loopback-only HTTP to the local runtime, so no TLS stack is needed.
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+futures-util = "0.3"
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

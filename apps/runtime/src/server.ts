@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { ZodError } from 'zod';
-import { AgentRegistry, HubError, SessionManager } from '@agentic-hub/agent-core';
+import { AgentRegistry, HubError, SessionManager, providerErrorMessage } from '@agentic-hub/agent-core';
 import { Store } from '@agentic-hub/database';
 import { branchOf, diffOf, resolveRepository } from '@agentic-hub/git';
-import { CreateProjectRequestSchema, CreateSessionRequestSchema, ResolveApprovalRequestSchema, SendMessageRequestSchema } from '@agentic-hub/types';
+import { AgentProviderSchema, CreateProjectRequestSchema, CreateSessionRequestSchema, PairDeviceRequestSchema, ResolveApprovalRequestSchema, SendMessageRequestSchema, SetCredentialRequestSchema, UpdatePairingRequestSchema, type AgentProvider } from '@agentic-hub/types';
+import type { ControlPlaneConnector } from './control-plane.js';
+import type { CredentialStore } from './credentials.js';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 
@@ -30,8 +32,22 @@ function authorized(request: IncomingMessage, token: string): boolean {
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-export function createRuntimeServer(store: Store, registry: AgentRegistry, manager: SessionManager, token: string): Server {
+export interface RuntimeServerOptions {
+  credentials?: CredentialStore;
+  controlPlane?: ControlPlaneConnector;
+  /** Checks an API key with its provider before it is stored. */
+  verifyCredential?: (provider: AgentProvider, apiKey: string) => Promise<void>;
+  version?: string;
+}
+
+export function createRuntimeServer(store: Store, registry: AgentRegistry, manager: SessionManager, token: string, options: RuntimeServerOptions = {}): Server {
   const startedAt = new Date().toISOString();
+  const version = options.version ?? '0.2.0';
+  const provider = (raw: string): AgentProvider => {
+    const parsed = AgentProviderSchema.safeParse(raw);
+    if (!parsed.success || !registry.has(parsed.data)) throw new HubError('NOT_FOUND', 404, 'Provider not found');
+    return parsed.data;
+  };
   return createServer(async (request, response) => {
     try {
       const method = request.method ?? '';
@@ -39,11 +55,37 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
       const path = url.pathname;
       if (method === 'GET' && path === '/health') {
         const providers = await registry.list();
-        send(response, 200, { state: providers.some(provider => provider.ready) ? 'ready' : 'degraded', version: '0.1.0', startedAt, providers });
+        send(response, 200, { state: providers.some(p => p.ready) ? 'ready' : 'degraded', version, startedAt, providers });
         return;
       }
       if (!authorized(request, token)) throw new HubError('UNAUTHORIZED', 401, 'Bearer token required');
-      if (method === 'GET' && path === '/providers') { send(response, 200, { providers: await registry.list() }); return; }
+      if (method === 'GET' && path === '/providers') { send(response, 200, { providers: await registry.list(url.searchParams.has('refresh')) }); return; }
+      const providerMatch = /^\/providers\/([a-z]+)\/(models|credentials)$/.exec(path);
+      if (providerMatch) {
+        const id = provider(providerMatch[1]!);
+        if (method === 'GET' && providerMatch[2] === 'models') { send(response, 200, { provider: id, models: await registry.listModels(id) }); return; }
+        if (providerMatch[2] === 'credentials' && (method === 'PUT' || method === 'DELETE')) {
+          const credentials = options.credentials;
+          if (!credentials?.accepts(id)) throw new HubError('UNSUPPORTED_ACTION', 422, 'This provider signs in through its own CLI, not an API key');
+          if (method === 'PUT') {
+            const input = SetCredentialRequestSchema.parse(await body(request));
+            if (options.verifyCredential) {
+              try { await options.verifyCredential(id, input.apiKey); }
+              catch (error) { throw new HubError('VALIDATION_ERROR', 400, providerErrorMessage(error, id === 'openai' ? 'OpenAI' : 'Anthropic')); }
+            }
+            credentials.set(id, input.apiKey);
+          } else credentials.clear(id);
+          registry.invalidate(id);
+          send(response, 200, { provider: await registry.readiness(id, true) }); return;
+        }
+      }
+      if (path === '/pairing' && options.controlPlane) {
+        const plane = options.controlPlane;
+        if (method === 'GET') { send(response, 200, { pairing: plane.status() }); return; }
+        if (method === 'POST') { send(response, 200, { pairing: await plane.pair(PairDeviceRequestSchema.parse(await body(request))) }); return; }
+        if (method === 'PATCH') { send(response, 200, { pairing: plane.update(UpdatePairingRequestSchema.parse(await body(request))) }); return; }
+        if (method === 'DELETE') { send(response, 200, { pairing: await plane.unpair() }); return; }
+      }
       if (method === 'GET' && path === '/projects') { send(response, 200, { projects: store.projects() }); return; }
       if (method === 'POST' && path === '/projects') {
         const input = CreateProjectRequestSchema.parse(await body(request));
@@ -56,7 +98,11 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
         store.putProject(project);
         send(response, 201, { project }); return;
       }
-      if (method === 'GET' && path === '/sessions') { send(response, 200, { sessions: store.sessions() }); return; }
+      if (method === 'GET' && path === '/sessions') {
+        const sessions = store.sessions();
+        const summaries = sessions.map(s => [s.id, store.sessionSummary(s.id)] as const);
+        send(response, 200, { sessions, titles: Object.fromEntries(summaries.map(([id, s]) => [id, s.title])), messageCounts: Object.fromEntries(summaries.map(([id, s]) => [id, s.messageCount])) }); return;
+      }
       if (method === 'POST' && path === '/sessions') {
         const input = CreateSessionRequestSchema.parse(await body(request));
         send(response, 201, { session: await manager.create(input.projectId, input.config) }); return;
@@ -67,7 +113,7 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
         const action = sessionMatch[2];
         const session = store.session(id);
         if (!session) throw new HubError('NOT_FOUND', 404, 'Session not found');
-        if (method === 'GET' && !action) { send(response, 200, { session }); return; }
+        if (method === 'GET' && !action) { send(response, 200, { session, title: store.sessionTitle(id), pendingApprovals: store.pendingApprovals(id) }); return; }
         if (method === 'POST' && action === 'messages') {
           const input = SendMessageRequestSchema.parse(await body(request));
           send(response, 202, await manager.send(id, input.text)); return;
@@ -93,9 +139,11 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
             response.write(`id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
           };
           const unsubscribe = manager.subscribe(id, write);
+          // Deltas are ephemeral: no id, so a reconnect never replays them.
+          const unsubscribeDeltas = manager.subscribeDeltas(id, delta => { if (!response.destroyed) response.write(`event: delta\ndata: ${JSON.stringify(delta)}\n\n`); });
           for (const event of store.events(id, after)) write(event);
           const heartbeat = setInterval(() => { if (!response.destroyed) response.write(': heartbeat\n\n'); }, 15_000);
-          response.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
+          response.on('close', () => { clearInterval(heartbeat); unsubscribe(); unsubscribeDeltas(); });
           return;
         }
       }

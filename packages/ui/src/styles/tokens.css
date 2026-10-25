@@ -48,6 +48,8 @@
   --agent-codex: oklch(0.55 0.11 175);
   --agent-claude: oklch(0.6 0.15 45);
   --agent-muse: oklch(0.55 0.17 315);
+  --agent-openai: oklch(0.5 0.02 160);
+  --agent-anthropic: oklch(0.58 0.12 40);
 
   /* Diff */
   --diff-add-bg: oklch(0.6 0.14 155 / 0.12);
@@ -95,6 +97,8 @@
   --agent-codex: oklch(0.75 0.11 175);
   --agent-claude: oklch(0.74 0.13 50);
   --agent-muse: oklch(0.74 0.14 315);
+  --agent-openai: oklch(0.82 0.03 160);
+  --agent-anthropic: oklch(0.78 0.1 45);
 
   --diff-add-bg: oklch(0.7 0.15 155 / 0.075);
   --diff-add-gutter: oklch(0.7 0.15 155 / 0.13);
@@ -139,6 +143,8 @@
   --color-agent-codex: var(--agent-codex);
   --color-agent-claude: var(--agent-claude);
   --color-agent-muse: var(--agent-muse);
+  --color-agent-openai: var(--agent-openai);
+  --color-agent-anthropic: var(--agent-anthropic);
   --color-diff-add-bg: var(--diff-add-bg);
   --color-diff-add-gutter: var(--diff-add-gutter);
   --color-diff-add-fg: var(--diff-add-fg);
@@ -235,3 +241,53 @@
     outline-offset: 1px;
   }
 }
+
+/* Syntax highlighting (highlight.js classes), driven by theme tokens. */
+:root {
+  --code-keyword: oklch(0.5 0.17 300);
+  --code-string: oklch(0.5 0.12 150);
+  --code-number: oklch(0.55 0.14 50);
+  --code-comment: oklch(0.6 0.01 265);
+  --code-title: oklch(0.5 0.14 250);
+  --code-attr: oklch(0.55 0.12 200);
+  --code-meta: oklch(0.55 0.08 80);
+}
+[data-theme="dark"] {
+  --code-keyword: oklch(0.78 0.13 305);
+  --code-string: oklch(0.8 0.12 145);
+  --code-number: oklch(0.8 0.12 60);
+  --code-comment: oklch(0.6 0.015 265);
+  --code-title: oklch(0.78 0.11 245);
+  --code-attr: oklch(0.8 0.1 200);
+  --code-meta: oklch(0.78 0.08 85);
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-doctag,
+.hljs-type { color: var(--code-keyword); }
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-symbol,
+.hljs-template-tag { color: var(--code-string); }
+.hljs-number,
+.hljs-literal,
+.hljs-variable.constant_ { color: var(--code-number); }
+.hljs-comment,
+.hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-section { color: var(--code-title); }
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-name,
+.hljs-selector-class,
+.hljs-selector-id { color: var(--code-attr); }
+.hljs-meta,
+.hljs-params { color: var(--code-meta); }
+.hljs-deletion { color: var(--diff-del-fg); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }

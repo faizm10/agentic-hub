@@ -1,4 +1,4 @@
-import type { SessionEvent } from "../model/events";
+import type { SessionEvent, StreamDeltaEvent } from "../model/events";
 import type {
   ActivityEntry,
   AgentDescriptor,
@@ -8,6 +8,8 @@ import type {
   ConnectionInfo,
   Device,
   FileDiff,
+  ModelOption,
+  PairingInfo,
   Project,
   ProviderConfig,
   SessionSnapshot,
@@ -33,7 +35,13 @@ export interface AgentHubClient {
   reconnect(): void;
 
   listAgents(): Promise<AgentDescriptor[]>;
-  listProviders(): Promise<ProviderConfig[]>;
+  /** `refresh` re-runs CLI detection instead of using the runtime's short cache. */
+  listProviders(options?: { refresh?: boolean }): Promise<ProviderConfig[]>;
+  /** Models the provider currently offers. Rejects when discovery is unsupported or the provider isn't ready. */
+  listModels(agentId: AgentId): Promise<ModelOption[]>;
+  /** Saves an API key in the runtime's encrypted store after the provider accepts it. The key is never returned. */
+  setApiKey(agentId: AgentId, apiKey: string): Promise<ProviderConfig>;
+  clearApiKey(agentId: AgentId): Promise<ProviderConfig>;
 
   listProjects(): Promise<Project[]>;
   /** Register a repository the user picked natively. */
@@ -41,13 +49,24 @@ export interface AgentHubClient {
 
   listSessions(filter?: { projectId?: string }): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<SessionSnapshot>;
-  createSession(input: { projectId: string; agentId: AgentId; prompt: string }): Promise<SessionSummary>;
+  createSession(input: { projectId: string; agentId: AgentId; model?: string; prompt: string }): Promise<SessionSummary>;
   sendMessage(sessionId: string, text: string): Promise<void>;
   cancelRun(sessionId: string): Promise<void>;
   resolveApproval(sessionId: string, approvalId: string, decision: ApprovalDecision): Promise<void>;
   getDiff(sessionId: string, path: string): Promise<FileDiff>;
   /** Stream session events with seq > `afterSeq`. */
-  subscribe(sessionId: string, afterSeq: number, onEvent: (event: SessionEvent) => void): Unsubscribe;
+  subscribe(
+    sessionId: string,
+    afterSeq: number,
+    onEvent: (event: SessionEvent) => void,
+    onDelta?: (delta: StreamDeltaEvent) => void,
+  ): Unsubscribe;
+
+  /** Web control-plane pairing for this runtime (desktop only). */
+  getPairing(): Promise<PairingInfo>;
+  pair(input: { controlPlaneUrl: string; code: string; deviceName?: string }): Promise<PairingInfo>;
+  updatePairing(input: { allowRemoteControl: boolean }): Promise<PairingInfo>;
+  unpair(): Promise<PairingInfo>;
 
   /** Remote-companion surface (web). */
   listDevices(): Promise<Device[]>;

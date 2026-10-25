@@ -3,8 +3,8 @@ import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
-import type { AgentCapabilities, AgentConfig, ApprovalDecision, NewAgentEvent, ProviderInfo } from '@agentic-hub/types';
-import type { AgentAdapter, AdapterSession } from '@agentic-hub/agent-core';
+import type { AgentCapabilities, ApprovalDecision, ModelInfo, NewAgentEvent, NewStreamDelta, ProviderInfo } from '@agentic-hub/types';
+import type { AgentAdapter, AdapterSession, StartInput } from '@agentic-hub/agent-core';
 
 const exec = promisify(execFile);
 type RecordValue = Record<string, unknown>;
@@ -39,6 +39,15 @@ export function normalizeCodexItem(raw: unknown, phase: 'started' | 'completed')
     }
   }
   return events;
+}
+
+/** `item/agentMessage/delta` and `item/reasoning/summaryTextDelta` notifications as hub deltas. */
+export function codexDelta(method: string, params: RecordValue): NewStreamDelta | null {
+  const delta = str(params.delta);
+  if (!delta) return null;
+  if (method === 'item/agentMessage/delta') return { streamId: str(params.itemId), kind: 'text', delta };
+  if (method === 'item/reasoning/summaryTextDelta') return { streamId: `${str(params.itemId)}:${String(params.summaryIndex ?? 0)}`, kind: 'reasoning', delta };
+  return null;
 }
 
 class CodexSession implements AdapterSession {
@@ -81,9 +90,26 @@ class CodexSession implements AdapterSession {
       try { this.write({ id, method, params }); } catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
-  async initialize(previous: string | null): Promise<void> {
-    await this.request('initialize', { clientInfo: { name: 'agentic_hub', title: 'Agentic Hub', version: '0.1.0' } });
+  async handshake(): Promise<void> {
+    await this.request('initialize', { clientInfo: { name: 'agentic_hub', title: 'Agentic Hub', version: '0.2.0' } });
     this.write({ method: 'initialized', params: {} });
+  }
+  async listModels(): Promise<ModelInfo[]> {
+    const models: ModelInfo[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await this.request('model/list', cursor ? { cursor } : {});
+      for (const raw of Array.isArray(page.data) ? page.data : []) {
+        const model = obj(raw);
+        if (model.hidden === true || !str(model.model)) continue;
+        models.push({ id: str(model.model), displayName: str(model.displayName) || str(model.model), ...(str(model.description) ? { description: str(model.description) } : {}), isDefault: model.isDefault === true });
+      }
+      cursor = typeof page.nextCursor === 'string' ? page.nextCursor : null;
+    } while (cursor);
+    return models;
+  }
+  async initialize(previous: string | null): Promise<void> {
+    await this.handshake();
     const result = previous
       ? await this.request('thread/resume', { threadId: previous, excludeTurns: true })
       : await this.request('thread/start', { cwd: this.cwd, ...(this.model ? { model: this.model } : {}) });
@@ -93,6 +119,10 @@ class CodexSession implements AdapterSession {
   subscribe(listener: (event: NewAgentEvent) => void): () => void {
     this.events.on('event', listener);
     return () => this.events.off('event', listener);
+  }
+  subscribeDeltas(listener: (delta: NewStreamDelta) => void): () => void {
+    this.events.on('delta', listener);
+    return () => this.events.off('delta', listener);
   }
   private emit(event: NewAgentEvent): void { this.events.emit('event', event); }
   private onMessage(message: RecordValue): void {
@@ -134,6 +164,8 @@ class CodexSession implements AdapterSession {
       return;
     }
     if (str(params.threadId) !== this.providerSessionId) return;
+    const delta = codexDelta(method, params);
+    if (delta) { this.events.emit('delta', delta); return; }
     if (method === 'error') { this.emit({ type: 'error', code: 'CODEX_ERROR', message: str(obj(params.error).message) || 'Codex error' }); return; }
     if (method !== 'item/started' && method !== 'item/completed') return;
     for (const event of normalizeCodexItem(params.item, method === 'item/started' ? 'started' : 'completed')) this.emit(event);
@@ -162,15 +194,21 @@ class CodexSession implements AdapterSession {
 
 export class CodexAdapter implements AgentAdapter {
   readonly provider = 'codex';
-  readonly capabilities: AgentCapabilities = { execution: true, streaming: true, interactiveMessages: true, approvals: true, cancellation: true, gitDiff: true };
+  readonly capabilities: AgentCapabilities = { execution: true, streaming: true, interactiveMessages: true, approvals: true, cancellation: true, gitDiff: true, modelDiscovery: true, textDeltas: true };
   async readiness(): Promise<ProviderInfo> {
+    const base = { provider: this.provider, displayName: 'Codex', capabilities: this.capabilities, kind: 'agent', authMethod: 'cli', setupUrl: 'https://developers.openai.com/codex/cli' } as const;
     try {
-      await exec('codex', ['--version'], { timeout: 5_000 });
+      const version = (await exec('codex', ['--version'], { timeout: 5_000 })).stdout.trim();
       const auth = await exec('codex', ['login', 'status'], { timeout: 5_000 }).then(() => true).catch(() => false);
-      return { provider: this.provider, displayName: 'Codex', capabilities: this.capabilities, installed: true, authenticated: auth, ready: auth, ...(auth ? {} : { reason: 'Codex is not signed in' }) };
-    } catch { return { provider: this.provider, displayName: 'Codex', capabilities: this.capabilities, installed: false, authenticated: false, ready: false, reason: 'Codex CLI is not installed' }; }
+      return { ...base, version, installed: true, authenticated: auth, ready: auth, ...(auth ? {} : { reason: 'Codex is not signed in. Run `codex login` in a terminal.' }) };
+    } catch { return { ...base, installed: false, authenticated: false, ready: false, reason: 'Codex CLI is not installed. Install it with `npm install -g @openai/codex`.' }; }
   }
-  async start(input: { cwd: string; config: AgentConfig; providerSessionId: string | null }): Promise<AdapterSession> {
+  async models(): Promise<ModelInfo[]> {
+    const session = new CodexSession(process.cwd(), undefined);
+    try { await session.handshake(); return await session.listModels(); }
+    finally { await session.cleanup(); }
+  }
+  async start(input: StartInput): Promise<AdapterSession> {
     const session = new CodexSession(input.cwd, input.config.model);
     try { await session.initialize(input.providerSessionId); return session; }
     catch (error) { await session.cleanup(); throw error; }

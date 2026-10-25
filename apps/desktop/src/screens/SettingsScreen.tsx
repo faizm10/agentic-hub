@@ -1,23 +1,26 @@
-import { Button, Kbd, SegmentedControl, ThemeToggle, safeStorage } from "@agentic-hub/ui";
-import { useClient } from "@agentic-hub/ui/client";
+import { Button, Kbd, PairingSettings, SegmentedControl, ThemeToggle, safeStorage } from "@agentic-hub/ui";
+import { errorMessage, useClient, usePairing, usePairingActions } from "@agentic-hub/ui/client";
 import { FlaskConical, Plug } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { isTauri } from "../platform/native";
+import { restartNativeRuntime, useNativeRuntimeStatus } from "../platform/runtime-status";
 import { useAppState, type DataMode } from "../state/app-state";
 import { ScreenBody, ScreenHeader } from "./ScreenHeader";
 
 const SHORTCUTS: [string, string][] = [
   ["mod+k", "Command palette"],
-  ["mod+n", "New session"],
+  ["mod+n", "New chat"],
   ["mod+o", "Open repository"],
-  ["mod+y", "Session history"],
+  ["mod+y", "All chats"],
   ["mod+b", "Toggle sidebar"],
   ["mod+j", "Toggle review panel"],
   ["mod+shift+d", "Review changes"],
   ["mod+.", "Stop the active run"],
-  ["mod+1", "Choose Codex (new session)"],
-  ["mod+2", "Choose Claude Code (new session)"],
-  ["mod+3", "Choose Muse (new session)"],
+  ["mod+1", "Choose Codex (new chat)"],
+  ["mod+2", "Choose Claude Code (new chat)"],
+  ["mod+3", "Choose Muse Code (new chat)"],
+  ["mod+4", "Choose OpenAI (new chat)"],
+  ["mod+5", "Choose Anthropic (new chat)"],
   ["enter", "Send message"],
   ["shift+enter", "New line in message"],
   ["mod+,", "Settings"],
@@ -32,6 +35,41 @@ function Section({ title, description, children }: { title: string; description?
       </div>
       <div className="min-w-0">{children}</div>
     </section>
+  );
+}
+
+function WebAccess() {
+  const client = useClient();
+  const live = client.mode === "live";
+  const pairing = usePairing(live);
+  const actions = usePairingActions();
+  if (!live) return <p className="text-sm text-fg-muted">Switch the data source to the local runtime to pair this computer with the web app.</p>;
+  return (
+    <PairingSettings
+      pairing={pairing.data}
+      loading={pairing.isPending && !pairing.isError}
+      error={pairing.isError ? errorMessage(pairing.error) : undefined}
+      onPair={(input) => actions.pair.mutateAsync(input)}
+      onToggleRemoteControl={(allowRemoteControl) => actions.update.mutateAsync({ allowRemoteControl })}
+      onUnpair={() => actions.unpair.mutateAsync()}
+    />
+  );
+}
+
+function RuntimeStatusRow() {
+  const status = useNativeRuntimeStatus();
+  if (!status) return <dd className="text-fg-muted">Vite bridge to <code className="font-mono text-xs">pnpm runtime:start</code></dd>;
+  const label =
+    status.state === "ready" ? `Running (v${status.version})` : status.state === "starting" ? "Starting…" : status.state === "stopped" ? "Stopped" : status.detail;
+  return (
+    <dd className="flex min-w-0 items-center gap-2 text-fg-muted">
+      <span className="truncate">{label}</span>
+      {status.state !== "ready" && status.state !== "starting" ? (
+        <Button size="xs" onClick={() => void restartNativeRuntime()}>
+          Restart
+        </Button>
+      ) : null}
+    </dd>
   );
 }
 
@@ -54,19 +92,22 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
             onChange={(dataMode) => setPrefs({ dataMode, activeSessionId: undefined, activeProjectId: undefined })}
             options={[
               { value: "live", label: "Local runtime", icon: <Plug /> },
-              { value: "demo", label: "Demo fixtures", icon: <FlaskConical /> },
+              { value: "demo", label: "Sample data", icon: <FlaskConical /> },
             ]}
           />
           <p className="mt-2 text-xs text-fg-muted">
             {prefs.dataMode === "demo"
-              ? "Demo fixtures are sample data. Replies are scripted, no agent runs, and nothing on disk changes."
-              : "Connects to the Agentic Hub runtime on this machine. Credentials stay with each agent's CLI or the runtime."}
+              ? "Sample data for exploring the interface. Replies are scripted, no agent runs, and nothing on disk changes."
+              : "The Agentic Hub runtime on this computer. CLI sign-ins stay with each CLI; API keys are stored encrypted by the runtime."}
           </p>
         </Section>
-        <Section title="Providers" description="Agent CLIs, models and approval policy.">
+        <Section title="Providers" description="Sign in to coding agents and add model API keys.">
           <Button size="sm" onClick={() => navigate("providers")}>
             Manage providers
           </Button>
+        </Section>
+        <Section title="Web access" description="Use this computer's agents from the Agentic Hub website.">
+          <WebAccess />
         </Section>
         <Section title="Layout" description="Panel sizes are remembered per window.">
           <Button
@@ -97,11 +138,15 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
           <dl className="space-y-1 text-sm">
             <div className="flex gap-2">
               <dt className="w-24 text-fg-subtle">Version</dt>
-              <dd className="font-mono text-xs text-fg-muted">0.1.0</dd>
+              <dd className="font-mono text-xs text-fg-muted">0.2.0</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="w-24 shrink-0 text-fg-subtle">Runtime</dt>
+              <RuntimeStatusRow />
             </div>
             <div className="flex gap-2">
               <dt className="w-24 text-fg-subtle">Shell</dt>
-              <dd className="text-fg-muted">{isTauri() ? "Tauri desktop" : "Browser preview"}</dd>
+              <dd className="text-fg-muted">{isTauri() ? "Desktop app" : "Browser preview"}</dd>
             </div>
             <div className="flex gap-2">
               <dt className="w-24 text-fg-subtle">Client</dt>

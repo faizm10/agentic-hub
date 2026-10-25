@@ -3,12 +3,11 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
 import { Providers } from "@/components/providers";
-import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "Agentic Hub", template: "%s · Agentic Hub" },
-  description: "Your coding-agent sessions, devices and activity at a glance.",
+  description: "One workspace for your coding agents and AI models: Codex, Claude Code, Muse Code, OpenAI and Anthropic.",
 };
 
 export const viewport: Viewport = {
@@ -26,10 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Script id="theme-bootstrap" strategy="beforeInteractive">
           {themeBootstrapScript}
         </Script>
-        <Providers>
-          <SiteHeader />
-          {children}
-        </Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

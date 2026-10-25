@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Agentic Hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "dev.agentichub.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm --filter @agentic-hub/runtime bundle && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm --filter @agentic-hub/runtime bundle && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -15,12 +15,15 @@
         "label": "main",
         "title": "Agentic Hub",
         "width": 1360,
-        "height": 860,
+        "height": 880,
         "minWidth": 720,
         "minHeight": 520,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 16, "y": 20 }
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 20
+        }
       }
     ],
     "security": {
@@ -29,7 +32,37 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "One workspace for your coding agents and models.",
+    "longDescription": "Agentic Hub runs Codex, Claude Code and Muse Code against your local repositories and chats with OpenAI and Anthropic models, with streaming, approvals and diff review in one app.",
+    "copyright": "\u00a9 2026 Agentic Hub",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../runtime/dist-bundle/agentic-hub-runtime.mjs": "runtime/agentic-hub-runtime.mjs"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": true,
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
+    }
   }
 }

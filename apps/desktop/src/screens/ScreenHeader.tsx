@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export function ScreenHeader({ title, toolbar, actions, subtitle }: { title: ReactNode; toolbar?: ReactNode; actions?: ReactNode; subtitle?: ReactNode }) {
   return (
-    <header data-tauri-drag-region className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-2">
+    <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-2">
       {toolbar}
       <div className="flex min-w-0 flex-1 items-baseline gap-2 px-1">
         <h1 className="truncate text-sm font-medium text-fg">{title}</h1>

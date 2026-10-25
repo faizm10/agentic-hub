@@ -37,6 +37,19 @@ export type SessionEventPayload =
    */
   | { type: "batch"; events: SessionEventPayload[] };
 
+/**
+ * Partial streamed text. Ephemeral: it carries no sequence number, never
+ * advances `lastSeq`, and is replaced by the persisted message that follows.
+ */
+export interface StreamDeltaEvent {
+  type: "stream.delta";
+  sessionId: string;
+  streamId: string;
+  kind: "text" | "reasoning";
+  text: string;
+  at: string;
+}
+
 export type SessionEvent = SessionEventPayload & {
   sessionId: string;
   /** Monotonic per-session sequence; used to de-duplicate replays after reconnect. */
@@ -57,6 +70,22 @@ function upsert(timeline: TimelineItem[], id: string, update: (prev: TimelineIte
  * sequence number at or below `lastSeq` are ignored, so a reconnecting stream
  * can safely replay from an earlier cursor.
  */
+export const STREAM_PREFIX = "stream:";
+const isEphemeral = (item: TimelineItem) => item.id.startsWith(STREAM_PREFIX);
+
+/** Folds an ephemeral delta into a streaming placeholder item. */
+export function applyStreamDelta(state: SessionSnapshot, delta: StreamDeltaEvent): SessionSnapshot {
+  const id = `${STREAM_PREFIX}${delta.streamId}`;
+  return {
+    ...state,
+    timeline: upsert(state.timeline, id, (prev) =>
+      delta.kind === "text"
+        ? { kind: "message", id, role: "assistant", text: (prev?.kind === "message" ? prev.text : "") + delta.text, createdAt: prev && "createdAt" in prev ? prev.createdAt : delta.at, streaming: true }
+        : { kind: "reasoning", id, summary: (prev?.kind === "reasoning" ? prev.summary : "") + delta.text, createdAt: prev && "createdAt" in prev ? prev.createdAt : delta.at, streaming: true },
+    ),
+  };
+}
+
 export function applySessionEvent(state: SessionSnapshot, event: SessionEvent): SessionSnapshot {
   if (event.seq <= state.lastSeq) return state;
   if (event.type === "batch") {
@@ -77,14 +106,18 @@ function foldEvent(state: SessionSnapshot, event: SessionEvent): SessionSnapshot
     case "message.started":
       return {
         ...base,
-        timeline: upsert(state.timeline, event.messageId, () => ({
+        timeline: upsert(
+          event.role === "assistant" ? state.timeline.filter((item) => !(isEphemeral(item) && item.kind === "message")) : state.timeline,
+          event.messageId,
+          () => ({
           kind: "message",
           id: event.messageId,
           role: event.role,
           text: "",
           createdAt: at,
           streaming: true,
-        })),
+        }),
+        ),
         session: { ...state.session, messageCount: state.session.messageCount + 1, updatedAt: at },
       };
     case "message.delta":
@@ -106,7 +139,7 @@ function foldEvent(state: SessionSnapshot, event: SessionEvent): SessionSnapshot
     case "reasoning.delta":
       return {
         ...base,
-        timeline: upsert(state.timeline, event.reasoningId, (prev) =>
+        timeline: upsert(state.timeline.filter((item) => !(isEphemeral(item) && item.kind === "reasoning")), event.reasoningId, (prev) =>
           prev?.kind === "reasoning"
             ? { ...prev, summary: prev.summary + event.text }
             : { kind: "reasoning", id: event.reasoningId, summary: event.text, createdAt: at, streaming: true },
@@ -184,7 +217,7 @@ function foldEvent(state: SessionSnapshot, event: SessionEvent): SessionSnapshot
         session: { ...state.session, status: event.status, updatedAt: at },
         // A terminal run status closes anything still marked as streaming/running.
         timeline: terminal
-          ? state.timeline.map((item) => {
+          ? state.timeline.filter((item) => !isEphemeral(item)).map((item) => {
               if (item.kind === "message" && item.streaming) return { ...item, streaming: false };
               if (item.kind === "reasoning" && item.streaming) return { ...item, streaming: false };
               if (item.kind === "tool" && item.status === "running")

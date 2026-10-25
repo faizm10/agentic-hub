@@ -25,17 +25,22 @@
     "react-dom": "^19.0.0"
   },
   "dependencies": {
+    "@agentic-hub/types": "workspace:*",
     "@tanstack/react-query": "^5.104.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "highlight.js": "^11.12.0",
     "lucide-react": "^1.61.0",
     "radix-ui": "^1.8.1",
     "react-resizable-panels": "^4.15.0",
-    "tailwind-merge": "^3.7.0",
-    "@agentic-hub/types": "workspace:*"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@agentic-hub/agent-core": "workspace:*",
+    "@agentic-hub/agent-muse": "workspace:*",
+    "@agentic-hub/database": "workspace:*",
+    "@agentic-hub/runtime": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
@@ -52,9 +57,6 @@
     "tw-animate-css": "^1.4.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.0",
-    "vitest": "^5.0.5",
-    "@agentic-hub/agent-core": "workspace:*",
-    "@agentic-hub/database": "workspace:*",
-    "@agentic-hub/runtime": "workspace:*"
+    "vitest": "^5.0.5"
   }
 }

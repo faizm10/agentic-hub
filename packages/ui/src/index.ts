@@ -10,6 +10,7 @@ export * from "./lib/storage";
 export * from "./lib/theme";
 export * from "./lib/theme-script";
 export * from "./lib/use-media-query";
+export * from "./lib/use-copy";
 
 // Components
 export * from "./components/agent-mark";
@@ -17,6 +18,7 @@ export * from "./components/run-status-indicator";
 export * from "./components/states";
 export * from "./components/connection-banner";
 export * from "./components/markdown";
+export * from "./components/code-block";
 export * from "./components/chat-message";
 export * from "./components/reasoning-summary";
 export * from "./components/tool-execution-card";
@@ -39,6 +41,8 @@ export * from "./components/device-status-card";
 export * from "./components/theme-toggle";
 export * from "./components/command-palette";
 export * from "./components/app-shell";
+export * from "./components/new-chat-hero";
+export * from "./components/pairing-settings";
 
 // View-model types and helpers (also available at "@agentic-hub/ui/model")
 export * from "./model";

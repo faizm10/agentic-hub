@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
-export const AgentProviderSchema = z.enum(['codex', 'claude', 'muse']);
+/** Coding agents run in a local repository; model providers are conversational APIs. */
+export const AgentProviderSchema = z.enum(['codex', 'claude', 'muse', 'openai', 'anthropic']);
 export type AgentProvider = z.infer<typeof AgentProviderSchema>;
 
 export const AgentCapabilitiesSchema = z.object({
@@ -12,6 +13,10 @@ export const AgentCapabilitiesSchema = z.object({
   approvals: z.boolean(),
   cancellation: z.boolean(),
   gitDiff: z.boolean(),
+  /** The provider can list its available models. */
+  modelDiscovery: z.boolean().optional(),
+  /** The provider streams partial text (`delta` stream records). */
+  textDeltas: z.boolean().optional(),
 });
 export type AgentCapabilities = z.infer<typeof AgentCapabilitiesSchema>;
 
@@ -29,6 +34,16 @@ export const ProviderInfoSchema = z.object({
   authenticated: z.boolean(),
   ready: z.boolean(),
   reason: z.string().optional(),
+  /** `agent`: executes in a repository with tools and approvals. `model`: conversational API. */
+  kind: z.enum(['agent', 'model']).optional(),
+  /** How the provider is authenticated: its own CLI sign-in, or an API key held by the runtime. */
+  authMethod: z.enum(['cli', 'api-key']).optional(),
+  /** Where an API key came from. The key itself is never returned. */
+  credential: z.object({ source: z.enum(['stored', 'environment']), hint: z.string() }).nullable().optional(),
+  version: z.string().optional(),
+  defaultModel: z.string().optional(),
+  /** Official documentation for setting the provider up. */
+  setupUrl: z.string().optional(),
 });
 export type ProviderInfo = z.infer<typeof ProviderInfoSchema>;
 
@@ -166,3 +181,75 @@ export const ResolveApprovalRequestSchema = z.object({ decision: ApprovalDecisio
 export type ResolveApprovalRequest = z.infer<typeof ResolveApprovalRequestSchema>;
 export const ResolveApprovalResponseSchema = z.object({ approval: ApprovalRequestSchema });
 export type ResolveApprovalResponse = z.infer<typeof ResolveApprovalResponseSchema>;
+
+export const ModelInfoSchema = z.object({
+  id: z.string().min(1),
+  displayName: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+});
+export type ModelInfo = z.infer<typeof ModelInfoSchema>;
+export const GetModelsResponseSchema = z.object({ provider: AgentProviderSchema, models: z.array(ModelInfoSchema) });
+export type GetModelsResponse = z.infer<typeof GetModelsResponseSchema>;
+
+/** Stores an API key in the runtime's encrypted store. Only `openai` and `anthropic` accept keys. */
+export const SetCredentialRequestSchema = z.object({ apiKey: z.string().trim().min(8).max(500) });
+export type SetCredentialRequest = z.infer<typeof SetCredentialRequestSchema>;
+export const ProviderResponseSchema = z.object({ provider: ProviderInfoSchema });
+export type ProviderResponse = z.infer<typeof ProviderResponseSchema>;
+
+/**
+ * Ephemeral streaming text. Deltas are not persisted and carry no sequence:
+ * the complete `message` / `reasoning_summary` event that follows is
+ * authoritative. SSE sends them as `event: delta` records without an `id`.
+ */
+export const StreamDeltaSchema = z.object({
+  sessionId: IdSchema,
+  taskRunId: IdSchema,
+  /** Groups the deltas of one streamed message. */
+  streamId: z.string(),
+  kind: z.enum(['text', 'reasoning']),
+  delta: z.string(),
+});
+export type StreamDelta = z.infer<typeof StreamDeltaSchema>;
+export type NewStreamDelta = Omit<StreamDelta, 'sessionId' | 'taskRunId'>;
+
+// ── Web control plane (device pairing) ─────────────────────────────────────
+
+/** What a paired runtime reports to the web control plane on each sync. */
+export const DeviceSnapshotSchema = z.object({
+  runtimeVersion: z.string(),
+  platform: z.enum(['macos', 'windows', 'linux']),
+  allowRemoteControl: z.boolean(),
+  providers: z.array(ProviderInfoSchema),
+  projects: z.array(ProjectSchema),
+  sessions: z.array(SessionSchema.extend({ title: z.string().nullable() })),
+});
+export type DeviceSnapshot = z.infer<typeof DeviceSnapshotSchema>;
+
+export const DeviceCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('create_session'), projectId: IdSchema, config: AgentConfigSchema, text: z.string().min(1) }),
+  z.object({ type: z.literal('send_message'), sessionId: IdSchema, text: z.string().min(1) }),
+  z.object({ type: z.literal('cancel'), sessionId: IdSchema }),
+  z.object({ type: z.literal('resolve_approval'), approvalId: IdSchema, decision: ApprovalDecisionSchema }),
+]);
+export type DeviceCommand = z.infer<typeof DeviceCommandSchema>;
+
+export const PairingStatusSchema = z.object({
+  paired: z.boolean(),
+  controlPlaneUrl: z.string().nullable(),
+  deviceId: z.string().nullable(),
+  deviceName: z.string().nullable(),
+  allowRemoteControl: z.boolean(),
+  lastSyncAt: TimestampSchema.nullable(),
+  lastError: z.string().nullable(),
+});
+export type PairingStatus = z.infer<typeof PairingStatusSchema>;
+export const PairDeviceRequestSchema = z.object({
+  controlPlaneUrl: z.string().url(),
+  code: z.string().trim().min(6).max(32),
+  deviceName: z.string().trim().min(1).max(80).optional(),
+});
+export type PairDeviceRequest = z.infer<typeof PairDeviceRequestSchema>;
+export const UpdatePairingRequestSchema = z.object({ allowRemoteControl: z.boolean() });
+export type UpdatePairingRequest = z.infer<typeof UpdatePairingRequestSchema>;

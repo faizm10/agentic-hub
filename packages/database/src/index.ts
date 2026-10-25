@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {
@@ -9,7 +9,7 @@ import {
 const parse = <T>(schema: { parse(value: unknown): T }, value: unknown): T => schema.parse(value);
 const fromRow = <T>(schema: { parse(value: unknown): T }, row: unknown, key: Buffer): T | null => row && typeof row === 'object' && 'json' in row ? parse(schema, JSON.parse(unseal(String(row.json), key))) : null;
 
-function storageKey(filename: string, db: Database.Database): Buffer {
+function storageKey(filename: string, db: DatabaseSync): Buffer {
   if (filename === ':memory:') return randomBytes(32);
   const keyPath = `${filename}.key`;
   if (!existsSync(keyPath)) {
@@ -61,13 +61,13 @@ function redactEvent(event: NewAgentEvent): NewAgentEvent {
 }
 
 export class Store {
-  readonly db: Database.Database;
+  readonly db: DatabaseSync;
+  readonly filename: string;
   private readonly key: Buffer;
   constructor(filename: string) {
-    this.db = new Database(filename);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
-    this.db.pragma('secure_delete = ON');
+    this.filename = filename;
+    this.db = new DatabaseSync(filename);
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON; PRAGMA busy_timeout = 5000;');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), status TEXT NOT NULL, updated_at TEXT NOT NULL, json TEXT NOT NULL);
@@ -76,6 +76,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), task_run_id TEXT NOT NULL REFERENCES task_runs(id), sequence INTEGER NOT NULL, json TEXT NOT NULL, UNIQUE(session_id, sequence));
       CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), status TEXT NOT NULL, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, sequence);
     `);
     try {
@@ -88,10 +89,22 @@ export class Store {
       throw error;
     }
   }
-  close(): void { this.db.close(); }
+  close(): void { if (this.db.isOpen) this.db.close(); }
+  /** Runs `fn` in one immediate transaction (node:sqlite has no transaction helper). */
+  private transaction<T>(fn: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   private migratePlaintextRows(): void {
     let migrated = false;
-    this.db.transaction(() => {
+    this.transaction(() => {
       for (const table of ['projects', 'sessions', 'tasks', 'task_runs', 'events', 'approvals']) {
         const rows = this.db.prepare(`SELECT rowid, json FROM ${table} WHERE json NOT LIKE 'enc:v1:%'`).all() as { rowid: number; json: string }[];
         const update = this.db.prepare(`UPDATE ${table} SET json=? WHERE rowid=?`);
@@ -100,15 +113,11 @@ export class Store {
           migrated = true;
         }
       }
-    })();
-    if (migrated) {
-      this.db.pragma('wal_checkpoint(TRUNCATE)');
-      this.db.exec('VACUUM');
-      this.db.pragma('wal_checkpoint(TRUNCATE)');
-    }
+    });
+    if (migrated) this.db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);');
   }
   private recover(): void {
-    this.db.transaction(() => {
+    this.transaction(() => {
       for (const row of this.db.prepare("SELECT json FROM sessions WHERE status IN ('running','awaiting_approval')").all()) {
         const session = fromRow(SessionSchema, row, this.key)!;
         this.saveSession({ ...session, status: 'interrupted', updatedAt: new Date().toISOString() });
@@ -117,7 +126,7 @@ export class Store {
         const run = fromRow(TaskRunSchema, row, this.key)!;
         this.saveRun({ ...run, status: 'interrupted', finishedAt: new Date().toISOString(), error: 'Runtime restarted' });
       }
-    })();
+    });
   }
   putProject(project: Project): void {
     ProjectSchema.parse(project);
@@ -143,12 +152,12 @@ export class Store {
   run(id: string): TaskRun | null { return fromRow(TaskRunSchema, this.db.prepare('SELECT json FROM task_runs WHERE id=?').get(id), this.key); }
   runs(sessionId: string): TaskRun[] { return this.db.prepare('SELECT json FROM task_runs WHERE session_id=? ORDER BY rowid').all(sessionId).map(row => fromRow(TaskRunSchema, row, this.key)!); }
   appendEvent(sessionId: string, runId: string, event: NewAgentEvent): AgentEvent {
-    return this.db.transaction(() => {
+    return this.transaction(() => {
       const row = this.db.prepare('SELECT COALESCE(MAX(sequence)+1,0) AS next FROM events WHERE session_id=?').get(sessionId) as { next: number };
       const full = AgentEventSchema.parse({ ...redactEvent(event), id: randomUUID(), sessionId, taskRunId: runId, sequence: row.next, createdAt: new Date().toISOString() });
       this.db.prepare('INSERT INTO events (id,session_id,task_run_id,sequence,json) VALUES (?,?,?,?,?)').run(full.id, sessionId, runId, full.sequence, seal(JSON.stringify(full), this.key));
       return full;
-    })();
+    });
   }
   events(sessionId: string, after = -1): AgentEvent[] { return this.db.prepare('SELECT json FROM events WHERE session_id=? AND sequence>? ORDER BY sequence').all(sessionId, after).map(row => fromRow(AgentEventSchema, row, this.key)!); }
   nextSequence(sessionId: string): number { return (this.db.prepare('SELECT COALESCE(MAX(sequence)+1,0) AS next FROM events WHERE session_id=?').get(sessionId) as { next: number }).next; }
@@ -157,4 +166,39 @@ export class Store {
     this.db.prepare('INSERT INTO approvals (id,session_id,status,json) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.sessionId, stored.status, seal(JSON.stringify(stored), this.key));
   }
   approval(id: string): ApprovalRequest | null { return fromRow(ApprovalRequestSchema, this.db.prepare('SELECT json FROM approvals WHERE id=?').get(id), this.key); }
+  pendingApprovals(sessionId: string): ApprovalRequest[] {
+    return this.db.prepare("SELECT json FROM approvals WHERE session_id=? AND status='pending'").all(sessionId).map(row => fromRow(ApprovalRequestSchema, row, this.key)!);
+  }
+  /** Session title: the first line of the first user message, when there is one. */
+  sessionTitle(sessionId: string): string | null {
+    for (const row of this.db.prepare('SELECT json FROM events WHERE session_id=? ORDER BY sequence LIMIT 8').all(sessionId)) {
+      const event = fromRow(AgentEventSchema, row, this.key);
+      if (event?.type === 'message' && event.role === 'user') return event.text.split('\n')[0]!.trim().slice(0, 120) || null;
+    }
+    return null;
+  }
+  /** Title and number of user/assistant messages, from one pass over the session's events. */
+  sessionSummary(sessionId: string): { title: string | null; messageCount: number } {
+    let title: string | null = null;
+    let messageCount = 0;
+    for (const event of this.events(sessionId)) {
+      if (event.type !== 'message') continue;
+      messageCount++;
+      if (title === null && event.role === 'user') title = event.text.split('\n')[0]!.trim().slice(0, 120) || null;
+    }
+    return { title, messageCount };
+  }
+  /** Conversation history for providers that need the full transcript on every turn. */
+  transcript(sessionId: string): { role: 'user' | 'assistant'; text: string }[] {
+    return this.events(sessionId).flatMap(event => event.type === 'message' ? [{ role: event.role, text: event.text }] : []);
+  }
+  /** Encrypted key-value storage for credentials and runtime settings. Values never leave the runtime unless a caller returns them. */
+  setSecret(name: string, value: string): void {
+    this.db.prepare('INSERT INTO secrets (name,value,updated_at) VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').run(name, seal(value, this.key), new Date().toISOString());
+  }
+  secret(name: string): string | null {
+    const row = this.db.prepare('SELECT value FROM secrets WHERE name=?').get(name) as { value: string } | undefined;
+    return row ? unseal(row.value, this.key) : null;
+  }
+  deleteSecret(name: string): void { this.db.prepare('DELETE FROM secrets WHERE name=?').run(name); }
 }

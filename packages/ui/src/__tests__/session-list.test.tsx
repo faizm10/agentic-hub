@@ -61,6 +61,6 @@ describe("SessionList", () => {
 
   it("shows an empty message when nothing matches", () => {
     render(<SessionList sessions={sessions} projects={projects} filter="zzz" />);
-    expect(screen.getByText("No sessions match.")).toBeInTheDocument();
+    expect(screen.getByText("No chats match.")).toBeInTheDocument();
   });
 });

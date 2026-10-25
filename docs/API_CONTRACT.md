@@ -40,3 +40,41 @@ Approval resolution must call the provider's supported mechanism before marking 
 ## Errors
 
 Non-2xx responses use `{ "error": { "code": "...", "message": "..." } }`. Expected codes are `VALIDATION_ERROR` (400), `UNAUTHORIZED` (401), `NOT_FOUND` (404), `CONFLICT` (409), `PROVIDER_UNAVAILABLE` (503), `UNSUPPORTED_ACTION` (422), and `INTERNAL_ERROR` (500). Provider errors are persisted as `error` events and terminate the active run as failed. No API error exposes credentials or raw environment variables.
+
+## Additions in 0.2
+
+| Method | Path | Request | Success response | Semantics |
+| --- | --- | --- | --- | --- |
+| GET | `/providers?refresh` | — | `GetProvidersResponse` | `refresh` re-runs CLI detection instead of using the 15 s cache. |
+| GET | `/providers/:provider/models` | — | `GetModelsResponse` | Models from the provider's own discovery (`codex`, `claude`, `muse`, `openai`, `anthropic`). Cached for 5 minutes. |
+| PUT | `/providers/:provider/credentials` | `SetCredentialRequest` | `ProviderResponse` | `openai` and `anthropic` only. The key is verified with the provider, then stored encrypted. It is never returned; `ProviderInfo.credential` carries a hint like `sk-…abcd` and its source (`stored` or `environment`). |
+| DELETE | `/providers/:provider/credentials` | — | `ProviderResponse` | Removes a stored key. |
+| GET | `/pairing` | — | `{ pairing: PairingStatus }` | Web control-plane pairing status. See [CONTROL_PLANE.md](CONTROL_PLANE.md). |
+| POST | `/pairing` | `PairDeviceRequest` | `{ pairing: PairingStatus }` | Pairs with a web app using a one-time code. |
+| PATCH | `/pairing` | `UpdatePairingRequest` | `{ pairing: PairingStatus }` | Turns "Allow control from the web" on or off. |
+| DELETE | `/pairing` | — | `{ pairing: PairingStatus }` | Unpairs. |
+
+`ProviderInfo` gains optional `kind` (`agent` or `model`), `authMethod` (`cli` or `api-key`), `credential`, `version`, `defaultModel` and `setupUrl`. `AgentCapabilities` gains optional `modelDiscovery` and `textDeltas`. `GET /sessions` also returns `titles` and `messageCounts` keyed by session ID, and `GET /sessions/:id` returns `title` and `pendingApprovals`.
+
+`AgentConfig.model` is passed to the provider when a session starts; leave it out for the provider's default.
+
+### Streaming deltas
+
+Over SSE, providers with `textDeltas` also send ephemeral records:
+
+```
+event: delta
+data: {"sessionId":"…","taskRunId":"…","streamId":"…","kind":"text","delta":"Hel"}
+```
+
+Deltas have no `id`, are not persisted, and are never replayed after a reconnect. The complete `message` or `reasoning_summary` event that follows is authoritative; clients replace their partial text with it. JSON polling never returns deltas.
+
+### Runtime process
+
+On start the runtime takes an exclusive `runtime.lock` in its data directory (exit code 3 if another live runtime holds it), removes token files left by dead runtimes, and prints a machine-readable line for supervisors:
+
+```
+AGENTIC_HUB_READY {"url":"http://127.0.0.1:PORT","tokenFile":"…/token-PID","pid":PID,"version":"0.2.0"}
+```
+
+With `AGENTIC_HUB_EXIT_WITH_PARENT=1` it shuts down when its stdin closes, so it never outlives the desktop app.

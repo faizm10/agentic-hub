@@ -10,7 +10,9 @@ describe("AgentSelector", () => {
     render(<AgentSelector agents={demoAgents} providers={demoProviders} value="codex" onChange={onChange} />);
     await userEvent.click(screen.getByRole("button", { name: /Agent: Codex/ }));
     expect(await screen.findByRole("menuitemradio", { name: /Claude Code/ })).toBeInTheDocument();
-    expect(screen.getByText("Sign-in required")).toBeInTheDocument();
+    expect(screen.getByText("Not installed")).toBeInTheDocument();
+    expect(screen.getByText("Needs setup")).toBeInTheDocument();
+    expect(screen.getByText(/Models · chat only/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("menuitemradio", { name: /Claude Code/ }));
     expect(onChange).toHaveBeenCalledWith("claude-code");
   });

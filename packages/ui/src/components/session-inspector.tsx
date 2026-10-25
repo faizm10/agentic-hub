@@ -61,10 +61,13 @@ export function SessionInspector({
             <Activity /> Activity
             {activityCount ? <Badge>{activityCount}</Badge> : null}
           </TabsTrigger>
-          <TabsTrigger value="tests">
-            <FlaskConical /> Tests
-            {failedTests ? <span className="size-1.5 rounded-full bg-danger" aria-label="failures" /> : null}
-          </TabsTrigger>
+          {/* Only shown when the session reports test runs; agents don't report them today. */}
+          {snapshot.tests.length ? (
+            <TabsTrigger value="tests">
+              <FlaskConical /> Tests
+              {failedTests ? <span className="size-1.5 rounded-full bg-danger" aria-label="failures" /> : null}
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="details" aria-label="Details">
             <Info />
           </TabsTrigger>

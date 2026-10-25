@@ -1,28 +1,27 @@
 "use client";
 
-import { History, Plus, Search, Settings } from "lucide-react";
+import { History, KeyRound, Search, Settings, SquarePen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AGENT_DISPLAY } from "../model/agents";
 import type { ConnectionInfo, Project, ProviderConfig, SessionSummary } from "../model/types";
 import { cn } from "../lib/cn";
 import { Button } from "../primitives/button";
 import { Kbd } from "../primitives/kbd";
-import { SegmentedControl } from "../primitives/form";
 import { Tooltip } from "../primitives/tooltip";
 import { AgentMark } from "./agent-mark";
 import { ProjectSwitcher } from "./project-switcher";
-import { SessionList, SessionListSkeleton, type SessionGrouping } from "./session-list";
+import { SessionList, SessionListSkeleton } from "./session-list";
 
 const PROVIDER_DOT: Record<ProviderConfig["status"], string> = {
   ready: "bg-success",
   needs_auth: "bg-warning",
-  not_installed: "bg-fg-subtle",
+  not_installed: "bg-fg-subtle/60",
   error: "bg-danger",
   unknown: "bg-fg-subtle",
 };
 
-const CONNECTION_LABEL: Record<ConnectionInfo["status"], { label: string; dot: string }> = {
-  demo: { label: "Demo mode", dot: "bg-info" },
+export const CONNECTION_LABEL: Record<ConnectionInfo["status"], { label: string; dot: string }> = {
+  demo: { label: "Sample data", dot: "bg-info" },
   connecting: { label: "Connecting…", dot: "bg-fg-subtle animate-pulse-dot" },
   connected: { label: "Runtime connected", dot: "bg-success" },
   reconnecting: { label: "Reconnecting…", dot: "bg-warning animate-pulse-dot" },
@@ -46,8 +45,12 @@ export interface ProjectSidebarProps {
   onOpenSettings?: () => void;
   onOpenHistory?: () => void;
   onOpenProviders?: () => void;
-  /** Rendered above the switcher (e.g. a desktop drag region spacer). */
+  /** Rendered above everything (e.g. a desktop drag region spacer). */
   header?: ReactNode;
+  /** Rendered at the very bottom, e.g. an account menu. */
+  footer?: ReactNode;
+  /** Overrides the status label when connected, e.g. on the web. */
+  connectedLabel?: string;
   className?: string;
 }
 
@@ -68,93 +71,79 @@ export function ProjectSidebar({
   onOpenHistory,
   onOpenProviders,
   header,
+  footer,
+  connectedLabel,
   className,
 }: ProjectSidebarProps) {
   const [filter, setFilter] = useState("");
-  const [grouping, setGrouping] = useState<SessionGrouping>("project");
-  const conn = CONNECTION_LABEL[connection.status];
+  const conn = connection.status === "connected" && connectedLabel ? { ...CONNECTION_LABEL.connected, label: connectedLabel } : CONNECTION_LABEL[connection.status];
+  const projectSessions = activeProjectId ? sessions.filter((s) => s.projectId === activeProjectId) : sessions;
 
   return (
-    <aside aria-label="Projects and sessions" className={cn("flex h-full min-h-0 flex-col bg-surface", className)}>
+    <aside aria-label="Projects and conversations" className={cn("flex h-full min-h-0 flex-col bg-surface-2/60", className)}>
       {header}
-      <div className="space-y-2 px-2 pb-2 pt-1">
-        <ProjectSwitcher
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onSelect={onSelectProject}
-          onOpenRepository={onOpenRepository}
-        />
-        <Button variant="secondary" className="w-full justify-start" onClick={onNewSession} disabled={!onNewSession || !activeProjectId}>
-          <Plus /> <span className="flex-1 text-left">New session</span>
-          <Kbd keys="mod+n" />
-        </Button>
+      <div className="space-y-1 px-2.5 pb-2 pt-1">
+        <button
+          type="button"
+          onClick={onNewSession}
+          disabled={!onNewSession || !activeProjectId}
+          className="group flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-fg transition-colors hover:bg-surface-3 focus-ring disabled:opacity-50"
+        >
+          <SquarePen className="size-4" />
+          <span className="flex-1 text-left">New chat</span>
+          <Kbd keys="mod+n" className="opacity-0 transition-opacity group-hover:opacity-100" />
+        </button>
         <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter sessions"
-            aria-label="Filter sessions"
-            className="h-7 w-full rounded-md border border-transparent bg-surface-2 pl-7 pr-2 text-sm text-fg placeholder:text-fg-subtle transition-colors hover:border-border focus-visible:border-accent focus-visible:outline-none"
+            placeholder="Search chats"
+            aria-label="Search chats"
+            className="h-9 w-full rounded-lg border border-transparent bg-transparent pl-8 pr-2 text-sm text-fg placeholder:text-fg-subtle transition-colors hover:bg-surface-3 focus-visible:border-border focus-visible:bg-surface focus-visible:outline-none"
           />
         </div>
       </div>
-      <div className="flex items-center justify-between px-3 pb-1.5 pt-1">
-        <span className="text-2xs font-medium uppercase tracking-[0.06em] text-fg-subtle">Sessions</span>
-        <SegmentedControl
-          label="Group sessions by"
-          value={grouping}
-          onChange={setGrouping}
-          options={[
-            { value: "project", label: "Project" },
-            { value: "date", label: "Date" },
-          ]}
-          className="scale-90 origin-right"
-        />
+      <div className="px-2.5 pb-2">
+        <div className="px-2.5 pb-1 text-2xs font-medium text-fg-subtle">Project</div>
+        <ProjectSwitcher projects={projects} activeProjectId={activeProjectId} onSelect={onSelectProject} onOpenRepository={onOpenRepository} />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3">
         {sessionsUnavailable ? (
           <p className="px-3 py-6 text-center text-xs text-fg-subtle">{sessionsUnavailable}</p>
         ) : loading ? (
           <SessionListSkeleton />
         ) : (
-          <SessionList
-            sessions={sessions}
-            projects={projects}
-            activeSessionId={activeSessionId}
-            onSelect={onSelectSession}
-            grouping={grouping}
-            filter={filter}
-          />
+          <SessionList sessions={projectSessions} projects={projects} activeSessionId={activeSessionId} onSelect={onSelectSession} grouping="date" filter={filter} />
         )}
       </div>
-      <footer className="space-y-1 border-t border-border p-2">
-        {providers?.length ? (
+      <footer className="space-y-0.5 border-t border-border p-2.5">
+        {onOpenProviders ? (
           <button
             type="button"
             onClick={onOpenProviders}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-fg-muted transition-colors hover:bg-surface-2 focus-ring"
-            aria-label="Provider status"
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-ring"
+            aria-label="Providers"
           >
-            {providers.map((p) => (
-              <Tooltip key={p.agentId} content={`${AGENT_DISPLAY[p.agentId].name}: ${p.status.replace("_", " ")}`} side="top">
-                <span className="relative">
-                  <AgentMark agentId={p.agentId} size="sm" />
-                  <span className={cn("absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full ring-2 ring-surface", PROVIDER_DOT[p.status])} />
-                </span>
-              </Tooltip>
-            ))}
-            <span className="ml-auto">Providers</span>
+            <KeyRound className="size-4" />
+            <span className="flex-1 text-left">Providers</span>
+            <span className="flex items-center gap-1">
+              {providers?.map((p) => (
+                <Tooltip key={p.agentId} content={`${AGENT_DISPLAY[p.agentId].name}: ${p.status === "ready" ? "ready" : p.status.replace("_", " ")}`} side="top">
+                  <span className={cn("size-1.5 rounded-full", PROVIDER_DOT[p.status])} />
+                </Tooltip>
+              ))}
+            </span>
           </button>
         ) : null}
         <div className="flex items-center gap-1">
-          <div className="flex min-w-0 flex-1 items-center gap-2 px-2 text-xs text-fg-muted" role="status">
+          <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-xs text-fg-muted" role="status" title={connection.detail}>
             <span className={cn("size-1.5 shrink-0 rounded-full", conn.dot)} />
             <span className="truncate">{conn.label}</span>
           </div>
           {onOpenHistory ? (
-            <Tooltip content="Session history" shortcut="mod+y" side="top">
-              <Button variant="ghost" size="icon" aria-label="Session history" onClick={onOpenHistory}>
+            <Tooltip content="All chats" shortcut="mod+y" side="top">
+              <Button variant="ghost" size="icon" aria-label="All chats" onClick={onOpenHistory}>
                 <History />
               </Button>
             </Tooltip>
@@ -167,7 +156,22 @@ export function ProjectSidebar({
             </Tooltip>
           ) : null}
         </div>
+        {footer}
       </footer>
     </aside>
+  );
+}
+
+/** Small row of provider marks with status dots, e.g. for headers. */
+export function ProviderDots({ providers }: { providers: ProviderConfig[] }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {providers.map((p) => (
+        <span key={p.agentId} className="relative">
+          <AgentMark agentId={p.agentId} size="sm" />
+          <span className={cn("absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full ring-2 ring-surface", PROVIDER_DOT[p.status])} />
+        </span>
+      ))}
+    </span>
   );
 }

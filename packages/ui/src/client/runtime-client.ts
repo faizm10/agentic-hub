@@ -11,16 +11,20 @@ import type {
   AgentEvent,
   ApiError,
   CreateProjectResponse,
+  GetModelsResponse,
   GetProjectsResponse,
   GetProvidersResponse,
+  PairingStatus,
+  ProviderResponse,
   GetSessionDiffResponse,
   GetSessionEventsResponse,
   GetSessionsResponse,
   Project as ContractProject,
   SendMessageResponse,
   SessionResponse,
+  StreamDelta,
 } from "@agentic-hub/types";
-import { applySessionEvent } from "../model/events";
+import { applySessionEvent, type StreamDeltaEvent } from "../model/events";
 import type { ConnectionInfo, FileChange, SessionSnapshot } from "../model/types";
 import {
   changesWorkingTree,
@@ -30,6 +34,8 @@ import {
   toContractDecision,
   toFileChange,
   toFileDiff,
+  toModelOption,
+  toPairingInfo,
   toProject,
   toProvider,
   toProviderConfig,
@@ -38,6 +44,8 @@ import {
   toSessionSummary,
 } from "./adapters";
 import { NotImplementedYetError, RuntimeUnavailableError } from "./errors";
+
+type SessionsWithTitles = GetSessionsResponse & { titles?: Record<string, string | null>; messageCounts?: Record<string, number> };
 import { createReconnectingStream, type StreamTransport } from "./reconnecting-stream";
 import type { AgentHubClient } from "./types";
 
@@ -110,6 +118,10 @@ const userMessage = (sessionId: string, text: string): AgentEvent => ({
   sequence: 0,
   createdAt: new Date().toISOString(),
 });
+
+function toStreamDelta(delta: StreamDelta): StreamDeltaEvent {
+  return { type: "stream.delta", sessionId: delta.sessionId, streamId: delta.streamId, kind: delta.kind, text: delta.delta, at: new Date().toISOString() };
+}
 
 export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClient {
   const base = options.baseUrl.replace(/\/+$/, "");
@@ -217,8 +229,29 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
     async listAgents() {
       return (await request<GetProvidersResponse>("/providers")).providers.map(toAgentDescriptor);
     },
-    async listProviders() {
-      return (await request<GetProvidersResponse>("/providers")).providers.map(toProviderConfig);
+    async listProviders(opts) {
+      return (await request<GetProvidersResponse>(opts?.refresh ? "/providers?refresh" : "/providers")).providers.map(toProviderConfig);
+    },
+    async listModels(agentId) {
+      return (await request<GetModelsResponse>(`/providers/${toProvider(agentId)}/models`)).models.map(toModelOption);
+    },
+    async setApiKey(agentId, apiKey) {
+      return toProviderConfig((await request<ProviderResponse>(`/providers/${toProvider(agentId)}/credentials`, json("PUT", { apiKey }))).provider);
+    },
+    async clearApiKey(agentId) {
+      return toProviderConfig((await request<ProviderResponse>(`/providers/${toProvider(agentId)}/credentials`, json("DELETE"))).provider);
+    },
+    async getPairing() {
+      return toPairingInfo((await request<{ pairing: PairingStatus }>("/pairing")).pairing);
+    },
+    async pair(input) {
+      return toPairingInfo((await request<{ pairing: PairingStatus }>("/pairing", json("POST", input))).pairing);
+    },
+    async updatePairing(input) {
+      return toPairingInfo((await request<{ pairing: PairingStatus }>("/pairing", json("PATCH", input))).pairing);
+    },
+    async unpair() {
+      return toPairingInfo((await request<{ pairing: PairingStatus }>("/pairing", json("DELETE"))).pairing);
     },
 
     async listProjects() {
@@ -229,8 +262,13 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
     },
 
     async listSessions(filter) {
-      const [{ sessions }, projects] = await Promise.all([request<GetSessionsResponse>("/sessions"), projectsById()]);
+      const [{ sessions, titles, messageCounts }, projects] = await Promise.all([request<SessionsWithTitles>("/sessions"), projectsById()]);
       const selected = filter?.projectId ? sessions.filter((s) => s.projectId === filter.projectId) : sessions;
+      // Current runtimes return titles with the list; older ones need one event fetch per session.
+      if (titles)
+        return selected.map((session) =>
+          toSessionSummary(session, { title: titles[session.id] ?? undefined, messageCount: messageCounts?.[session.id], branch: projects.get(session.projectId)?.branch }),
+        );
       return Promise.all(
         selected.map(async (session) => {
           const summary = await events(session.id).then(
@@ -271,10 +309,10 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
       };
     },
 
-    async createSession({ projectId, agentId, prompt }) {
+    async createSession({ projectId, agentId, model, prompt }) {
       const { session } = await request<SessionResponse>(
         "/sessions",
-        json("POST", { projectId, config: { provider: toProvider(agentId) } }),
+        json("POST", { projectId, config: { provider: toProvider(agentId), ...(model ? { model } : {}) } }),
       );
       const project = (await projectsById()).get(projectId);
       try {
@@ -304,7 +342,7 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
       return toFileDiff(file, splitPatch(gitDiff.patch).get(path));
     },
 
-    subscribe(sessionId, afterSeq, onEvent) {
+    subscribe(sessionId, afterSeq, onEvent, onDelta) {
       let cursor = afterSeq;
       let closed = false;
       // Diff refreshes are async; a promise chain keeps delivery in sequence order.
@@ -323,6 +361,12 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
             if (!response.ok || !response.body) throw new Error(`Event stream failed (${response.status}).`);
             onOpen();
             for await (const record of readServerSentEvents(response.body, abort.signal)) {
+              if (record.event === "delta") {
+                // Ephemeral partial text: no id, never replayed, superseded by the persisted message.
+                const delta = JSON.parse(record.data) as StreamDelta;
+                if (!closed && delta.sessionId === sessionId) onDelta?.(toStreamDelta(delta));
+                continue;
+              }
               onMessage(JSON.parse(record.data) as AgentEvent);
             }
             throw new Error("Event stream ended.");

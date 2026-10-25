@@ -29,6 +29,8 @@ export interface DemoClientOptions {
   latencyMs?: number;
 }
 
+const READ_ONLY = "Demo mode is read-only. Connect to the local runtime to change settings.";
+
 export const DEMO_NOTICE = "Demo replay — scripted fixture events. No agent is running and nothing on disk changes.";
 
 function chunk(text: string, size = 14) {
@@ -38,7 +40,7 @@ function chunk(text: string, size = 14) {
 }
 
 function buildScript(prompt: string, agentId: AgentId, runId: string): Step[] {
-  const reasoning = agentId !== "muse";
+  const reasoning = true;
   const msg = `${runId}-a`;
   const steps: Step[] = [
     { delay: 0, event: { type: "notice", text: DEMO_NOTICE, tone: "neutral" } },
@@ -175,6 +177,14 @@ export function createDemoClient(options: DemoClientOptions = {}): AgentHubClien
 
     listAgents: () => wait(demoAgents),
     listProviders: () => wait(demoProviders),
+    listModels: (agentId) =>
+      wait((demoProviders.find((p) => p.agentId === agentId)?.availableModels ?? []).map((id, i) => ({ id, name: id, isDefault: i === 0 }))),
+    setApiKey: () => Promise.reject(new Error(READ_ONLY)),
+    clearApiKey: () => Promise.reject(new Error(READ_ONLY)),
+    getPairing: () => Promise.reject(new Error(READ_ONLY)),
+    pair: () => Promise.reject(new Error(READ_ONLY)),
+    updatePairing: () => Promise.reject(new Error(READ_ONLY)),
+    unpair: () => Promise.reject(new Error(READ_ONLY)),
     listProjects: () => wait(projects),
     async addProject(path) {
       const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -193,7 +203,7 @@ export function createDemoClient(options: DemoClientOptions = {}): AgentHubClien
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
       ),
     getSession: async (sessionId) => wait(requireSession(sessionId)),
-    async createSession({ projectId, agentId, prompt }) {
+    async createSession({ projectId, agentId, model, prompt }) {
       const project = projects.find((p) => p.id === projectId);
       const at = new Date().toISOString();
       const session: SessionSummary = {
@@ -201,6 +211,7 @@ export function createDemoClient(options: DemoClientOptions = {}): AgentHubClien
         projectId,
         title: prompt.length > 64 ? `${prompt.slice(0, 61)}…` : prompt,
         agentId,
+        model,
         status: "idle",
         branch: project?.branch ?? "unknown",
         createdAt: at,

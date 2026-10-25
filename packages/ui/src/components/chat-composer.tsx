@@ -9,6 +9,8 @@ import { Tooltip } from "../primitives/tooltip";
 
 export interface ChatComposerHandle {
   focus: () => void;
+  /** Replace the draft, e.g. from a suggestion. */
+  setText: (text: string) => void;
 }
 
 export interface ChatComposerProps {
@@ -33,7 +35,17 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const [value, setValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  useImperativeHandle(ref, () => ({ focus: () => textareaRef.current?.focus() }), []);
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => textareaRef.current?.focus(),
+      setText: (text: string) => {
+        setValue(text);
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      },
+    }),
+    [],
+  );
 
   useLayoutEffect(() => {
     const el = textareaRef.current;
@@ -60,10 +72,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   };
 
   return (
-    <div className={cn("mx-auto w-full max-w-[52rem] px-5 pb-4", className)}>
+    <div className={cn("mx-auto w-full max-w-[48rem] px-3 pb-3 sm:px-6 sm:pb-4", className)}>
       <div
         className={cn(
-          "rounded-xl border border-border bg-surface shadow-md transition-[border-color,box-shadow] focus-within:border-border-strong focus-within:shadow-lg",
+          "rounded-[1.6rem] border border-border bg-surface shadow-md transition-[border-color,box-shadow] focus-within:border-border-strong focus-within:shadow-lg",
           disabled && "opacity-70",
         )}
       >
@@ -84,9 +96,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
               void submit();
             }
           }}
-          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3.5 text-base leading-relaxed text-fg outline-none placeholder:text-fg-subtle disabled:cursor-not-allowed"
+          className="block max-h-60 min-h-[56px] w-full resize-none bg-transparent px-5 pb-1 pt-4 text-[0.9375rem] leading-relaxed text-fg outline-none placeholder:text-fg-subtle disabled:cursor-not-allowed"
         />
-        <div className="flex items-center gap-1 px-2 pb-2">
+        <div className="flex items-center gap-1 px-2.5 pb-2.5">
           <div className="flex min-w-0 flex-1 items-center gap-1">{toolbar}</div>
           {running ? (
             <Tooltip content={cancelling ? "Cancelling…" : "Stop run"} shortcut="mod+.">
@@ -96,21 +108,28 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
                 onClick={onCancel}
                 disabled={!onCancel || cancelling}
                 aria-label="Stop run"
-                className="rounded-lg"
+                className="size-8 rounded-full"
               >
                 <Square className="fill-current !size-3" />
               </Button>
             </Tooltip>
           ) : (
             <Tooltip content="Send" shortcut="enter">
-              <Button variant="primary" size="icon" onClick={() => void submit()} disabled={!canSend} aria-label="Send message" className="rounded-lg">
+              <Button
+                variant="primary"
+                size="icon"
+                onClick={() => void submit()}
+                disabled={!canSend}
+                aria-label="Send message"
+                className="size-8 rounded-full bg-fg text-bg hover:bg-fg/85"
+              >
                 <ArrowUp />
               </Button>
             </Tooltip>
           )}
         </div>
       </div>
-      <div className="mt-1.5 flex min-h-4 items-center justify-between gap-3 px-1 text-2xs text-fg-subtle">
+      <div className="mt-2 flex min-h-4 items-center justify-between gap-3 px-3 text-2xs text-fg-subtle">
         <div className="min-w-0 truncate">{footer}</div>
         <div className="hidden shrink-0 items-center gap-1 sm:flex">
           <Kbd keys="shift+enter" /> newline

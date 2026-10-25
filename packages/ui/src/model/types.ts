@@ -8,16 +8,30 @@
  * leaking transport shapes into components.
  */
 
-export type AgentId = "codex" | "claude-code" | "muse";
+export type AgentId = "codex" | "claude-code" | "muse" | "openai" | "anthropic";
+
+/** `agent`: a coding agent that works in the repository. `model`: a conversational model API. */
+export type AgentKind = "agent" | "model";
+
+export interface ModelOption {
+  id: string;
+  name: string;
+  description?: string;
+  isDefault?: boolean;
+}
 
 export interface AgentDescriptor {
   id: AgentId;
   name: string;
   vendor: string;
   description: string;
+  kind: AgentKind;
   capabilities: {
     reasoningSummaries: boolean;
     toolApprovals: boolean;
+    modelDiscovery: boolean;
+    /** Works in the repository: runs tools and changes files. */
+    repositoryAccess: boolean;
   };
 }
 
@@ -191,6 +205,9 @@ export interface ProviderConfig {
   agentId: AgentId;
   status: ProviderStatus;
   authMethod: "cli-login" | "api-key" | "none";
+  /** For API-key providers: a masked hint of the configured key and where it came from. Never the key. */
+  credential?: { source: "stored" | "environment"; hint: string };
+  setupUrl?: string;
   executablePath?: string;
   version?: string;
   defaultModel?: string;
@@ -222,4 +239,14 @@ export interface ActivityEntry {
   agentId?: AgentId;
   text: string;
   tone: "neutral" | "success" | "warning" | "danger";
+}
+
+export interface PairingInfo {
+  paired: boolean;
+  controlPlaneUrl: string | null;
+  deviceId: string | null;
+  deviceName: string | null;
+  allowRemoteControl: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
 }

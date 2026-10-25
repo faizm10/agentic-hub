@@ -27,3 +27,4 @@ apps/desktop/src-tauri/gen/
 # Tooling
 .DS_Store
 .gstack/
+apps/runtime/dist-bundle/

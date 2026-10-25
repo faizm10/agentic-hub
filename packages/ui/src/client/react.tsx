@@ -2,8 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { applySessionEvent } from "../model/events";
-import type { AgentId, ApprovalDecision, SessionSnapshot, SessionSummary } from "../model/types";
+import { applySessionEvent, applyStreamDelta } from "../model/events";
+import type { AgentId, ApprovalDecision, PairingInfo, ProviderConfig, SessionSnapshot, SessionSummary } from "../model/types";
 import type { AgentHubClient } from "./types";
 
 const ClientContext = createContext<AgentHubClient | null>(null);
@@ -20,6 +20,8 @@ export function useClient() {
 
 export const queryKeys = {
   agents: ["agents"] as const,
+  models: (agentId: string) => ["models", agentId] as const,
+  pairing: ["pairing"] as const,
   providers: ["providers"] as const,
   projects: ["projects"] as const,
   sessions: (projectId?: string) => ["sessions", projectId ?? "all"] as const,
@@ -65,6 +67,60 @@ export function useAgents() {
 export function useProviders() {
   const client = useClient();
   return useQuery({ queryKey: queryKeys.providers, queryFn: () => client.listProviders() });
+}
+
+/** Re-runs provider detection (CLI install/sign-in) and refreshes the cache. */
+export function useRefreshProviders() {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => client.listProviders({ refresh: true }),
+    onSuccess: (providers) => {
+      queryClient.setQueryData(queryKeys.providers, providers);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agents });
+      void queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
+  });
+}
+
+export function useModels(agentId: AgentId | undefined, enabled = true) {
+  const client = useClient();
+  return useQuery({
+    queryKey: queryKeys.models(agentId ?? ""),
+    queryFn: () => client.listModels(agentId!),
+    enabled: Boolean(agentId) && enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+export function useSetApiKey() {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, apiKey }: { agentId: AgentId; apiKey: string | null }) =>
+      apiKey ? client.setApiKey(agentId, apiKey) : client.clearApiKey(agentId),
+    onSuccess: (provider) => {
+      queryClient.setQueryData<ProviderConfig[]>(queryKeys.providers, (list) => list?.map((p) => (p.agentId === provider.agentId ? provider : p)));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.models(provider.agentId) });
+    },
+  });
+}
+
+export function usePairing(enabled = true) {
+  const client = useClient();
+  return useQuery({ queryKey: queryKeys.pairing, queryFn: () => client.getPairing(), enabled, refetchInterval: 10_000 });
+}
+
+export function usePairingActions() {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  const onSuccess = (info: PairingInfo) => queryClient.setQueryData(queryKeys.pairing, info);
+  return {
+    pair: useMutation({ mutationFn: (input: { controlPlaneUrl: string; code: string; deviceName?: string }) => client.pair(input), onSuccess }),
+    update: useMutation({ mutationFn: (input: { allowRemoteControl: boolean }) => client.updatePairing(input), onSuccess }),
+    unpair: useMutation({ mutationFn: () => client.unpair(), onSuccess }),
+  };
 }
 
 export function useProjects() {
@@ -116,6 +172,8 @@ export function useSessionStream(sessionId: string | undefined) {
   useEffect(() => {
     if (!sessionId || !ready) return;
     const afterSeq = queryClient.getQueryData<SessionSnapshot>(queryKeys.session(sessionId))?.lastSeq ?? 0;
+    const onDelta = (delta: Parameters<typeof applyStreamDelta>[1]) =>
+      queryClient.setQueryData<SessionSnapshot>(queryKeys.session(sessionId), (prev) => (prev ? applyStreamDelta(prev, delta) : prev));
     return client.subscribe(sessionId, afterSeq, (event) => {
       let updated: SessionSummary | undefined;
       queryClient.setQueryData<SessionSnapshot>(queryKeys.session(sessionId), (prev) => {
@@ -131,7 +189,7 @@ export function useSessionStream(sessionId: string | undefined) {
           list?.map((s) => (s.id === summary.id ? summary : s)),
         );
       }
-    });
+    }, onDelta);
   }, [client, queryClient, sessionId, ready]);
 
   return query;
@@ -159,7 +217,7 @@ export function useCreateSession() {
   const client = useClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { projectId: string; agentId: AgentId; prompt: string }) => client.createSession(input),
+    mutationFn: (input: { projectId: string; agentId: AgentId; model?: string; prompt: string }) => client.createSession(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
 }
