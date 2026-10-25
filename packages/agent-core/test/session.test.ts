@@ -41,6 +41,19 @@ async function setup() {
 }
 
 describe('session lifecycle', () => {
+  it('rejects a second turn while the first adapter is starting', async () => {
+    const { store, adapter, manager, session } = await setup();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    adapter.start = async () => { await gate; return adapter.instance; };
+    const first = manager.send(session.id, 'first');
+    await expect(manager.send(session.id, 'second')).rejects.toMatchObject({ code: 'CONFLICT' });
+    release();
+    await first;
+    await manager.cancel(session.id);
+    store.close();
+  });
+
   it('persists ordered events and resolves an approval before continuing', async () => {
     const { store, adapter, manager, session } = await setup();
     const { run } = await manager.send(session.id, 'do work');

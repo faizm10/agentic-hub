@@ -8,6 +8,26 @@ import {
 const parse = <T>(schema: { parse(value: unknown): T }, value: unknown): T => schema.parse(value);
 const fromRow = <T>(schema: { parse(value: unknown): T }, row: unknown): T | null => row && typeof row === 'object' && 'json' in row ? parse(schema, JSON.parse(String(row.json))) : null;
 
+/** Best-effort removal of common credentials before text reaches durable storage. */
+export function redactStoredText(value: string): string {
+  return value
+    .replace(/\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{25,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{12,}/gi, '$1[REDACTED]')
+    .replace(/\b((?:api[_-]?key|access[_-]?token|secret|password|authorization)\s*[:=]\s*["']?)[^\s"'`,;]+/gi, '$1[REDACTED]');
+}
+
+function redactEvent(event: NewAgentEvent): NewAgentEvent {
+  switch (event.type) {
+    case 'message': case 'reasoning_summary': return { ...event, text: redactStoredText(event.text) };
+    case 'tool_start': return { ...event, description: redactStoredText(event.description) };
+    case 'tool_result': return { ...event, output: redactStoredText(event.output) };
+    case 'approval_requested': return { ...event, approval: { ...event.approval, description: redactStoredText(event.approval.description) } };
+    case 'error': return { ...event, message: redactStoredText(event.message) };
+    case 'completed': return { ...event, summary: event.summary === null ? null : redactStoredText(event.summary) };
+    default: return event;
+  }
+}
+
 export class Store {
   readonly db: Database.Database;
   constructor(filename: string) {
@@ -53,19 +73,19 @@ export class Store {
   session(id: string): Session | null { return fromRow(SessionSchema, this.db.prepare('SELECT json FROM sessions WHERE id=?').get(id)); }
   sessions(): Session[] { return this.db.prepare('SELECT json FROM sessions ORDER BY updated_at DESC').all().map(row => fromRow(SessionSchema, row)!); }
   saveTask(task: Task): void {
-    TaskSchema.parse(task);
-    this.db.prepare('INSERT INTO tasks (id,session_id,json) VALUES (?,?,?)').run(task.id, task.sessionId, JSON.stringify(task));
+    const stored = TaskSchema.parse({ ...task, prompt: redactStoredText(task.prompt) });
+    this.db.prepare('INSERT INTO tasks (id,session_id,json) VALUES (?,?,?)').run(stored.id, stored.sessionId, JSON.stringify(stored));
   }
   saveRun(run: TaskRun): void {
-    TaskRunSchema.parse(run);
-    this.db.prepare('INSERT INTO task_runs (id,task_id,session_id,status,json) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(run.id, run.taskId, run.sessionId, run.status, JSON.stringify(run));
+    const stored = TaskRunSchema.parse({ ...run, error: run.error === null ? null : redactStoredText(run.error) });
+    this.db.prepare('INSERT INTO task_runs (id,task_id,session_id,status,json) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.taskId, stored.sessionId, stored.status, JSON.stringify(stored));
   }
   run(id: string): TaskRun | null { return fromRow(TaskRunSchema, this.db.prepare('SELECT json FROM task_runs WHERE id=?').get(id)); }
   runs(sessionId: string): TaskRun[] { return this.db.prepare('SELECT json FROM task_runs WHERE session_id=? ORDER BY rowid').all(sessionId).map(row => fromRow(TaskRunSchema, row)!); }
   appendEvent(sessionId: string, runId: string, event: NewAgentEvent): AgentEvent {
     return this.db.transaction(() => {
       const row = this.db.prepare('SELECT COALESCE(MAX(sequence)+1,0) AS next FROM events WHERE session_id=?').get(sessionId) as { next: number };
-      const full = AgentEventSchema.parse({ ...event, id: randomUUID(), sessionId, taskRunId: runId, sequence: row.next, createdAt: new Date().toISOString() });
+      const full = AgentEventSchema.parse({ ...redactEvent(event), id: randomUUID(), sessionId, taskRunId: runId, sequence: row.next, createdAt: new Date().toISOString() });
       this.db.prepare('INSERT INTO events (id,session_id,task_run_id,sequence,json) VALUES (?,?,?,?,?)').run(full.id, sessionId, runId, full.sequence, JSON.stringify(full));
       return full;
     })();
@@ -73,8 +93,8 @@ export class Store {
   events(sessionId: string, after = -1): AgentEvent[] { return this.db.prepare('SELECT json FROM events WHERE session_id=? AND sequence>? ORDER BY sequence').all(sessionId, after).map(row => fromRow(AgentEventSchema, row)!); }
   nextSequence(sessionId: string): number { return (this.db.prepare('SELECT COALESCE(MAX(sequence)+1,0) AS next FROM events WHERE session_id=?').get(sessionId) as { next: number }).next; }
   saveApproval(approval: ApprovalRequest): void {
-    ApprovalRequestSchema.parse(approval);
-    this.db.prepare('INSERT INTO approvals (id,session_id,status,json) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(approval.id, approval.sessionId, approval.status, JSON.stringify(approval));
+    const stored = ApprovalRequestSchema.parse({ ...approval, description: redactStoredText(approval.description) });
+    this.db.prepare('INSERT INTO approvals (id,session_id,status,json) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,json=excluded.json').run(stored.id, stored.sessionId, stored.status, JSON.stringify(stored));
   }
   approval(id: string): ApprovalRequest | null { return fromRow(ApprovalRequestSchema, this.db.prepare('SELECT json FROM approvals WHERE id=?').get(id)); }
 }

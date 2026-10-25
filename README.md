@@ -38,7 +38,9 @@ pnpm test
 pnpm lint
 ```
 
-The `lint` script currently runs strict TypeScript checks; there is no separate style linter. Tests cover session transitions, persistence recovery, API authentication and validation, Git diff, and adapter event normalization. Live reply-only turns were verified locally for Codex and Claude Code. Approval UI paths are backed by provider APIs but have not yet been exercised against a live approval prompt.
+The `lint` script currently runs strict TypeScript checks; there is no separate style linter. Tests cover session transitions, concurrent turn rejection, persistence recovery and credential redaction, API authentication and validation, Git diff, and adapter event normalization. A live reply-only Codex turn returned `PONG` through App Server. Claude Code is installed but is currently signed out, so live Claude connectivity is unverified in this worktree. Approval paths have deterministic normalization coverage but have not yet been exercised against live provider prompts.
+
+The runtime redacts common API key and authorization token forms before persisting task and event text. This is best-effort detection, not a replacement for avoiding credentials in prompts. Codex currently forwards command and file change approval requests; other App Server input requests fail closed. Claude `AskUserQuestion` input is not yet represented by the v1 approval DTO. Git diff reports a repository-wide working tree snapshot; isolated worktree creation and a paired web bridge are deferred.
 
 ## Provider APIs
 

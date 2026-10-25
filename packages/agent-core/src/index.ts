@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { AgentCapabilities, AgentConfig, AgentEvent, AgentProvider, ApprovalDecision, NewAgentEvent, ProviderInfo, Session, Task, TaskRun } from '@agentic-hub/types';
-import { Store } from '@agentic-hub/database';
+import { Store, redactStoredText } from '@agentic-hub/database';
 
 export interface AdapterSession {
   readonly providerSessionId: string | null;
@@ -38,6 +38,7 @@ type Active = { adapter: AdapterSession; runId: string; unsubscribe: () => void;
 
 export class SessionManager {
   private active = new Map<string, Active>();
+  private starting = new Set<string>();
   private bus = new EventEmitter();
   constructor(readonly store: Store, readonly registry: AgentRegistry) { this.bus.setMaxListeners(0); }
   subscribe(sessionId: string, listener: (event: AgentEvent) => void): () => void {
@@ -58,25 +59,30 @@ export class SessionManager {
   async send(sessionId: string, text: string): Promise<{ task: Task; run: TaskRun }> {
     const session = this.store.session(sessionId);
     if (!session) throw new HubError('NOT_FOUND', 404, 'Session not found');
-    if (this.active.has(sessionId) || session.status === 'running' || session.status === 'awaiting_approval') throw new HubError('CONFLICT', 409, 'Session already has an active turn');
-    const project = this.store.project(session.projectId);
-    if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
-    const adapter = this.registry.get(session.config.provider);
-    const info = await adapter.readiness();
-    if (!info.ready) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
-    const instance = await adapter.start({ cwd: project.path, config: session.config, providerSessionId: session.providerSessionId });
-    const now = new Date().toISOString();
-    const task: Task = { id: randomUUID(), sessionId, prompt: text, createdAt: now };
-    const run: TaskRun = { id: randomUUID(), taskId: task.id, sessionId, status: 'running', startedAt: now, finishedAt: null, error: null };
-    this.store.saveTask(task);
-    this.store.saveRun(run);
-    this.setStatus(sessionId, 'running', instance.providerSessionId);
-    const active: Active = { adapter: instance, runId: run.id, unsubscribe: () => {}, finished: false, cancelRequested: false };
-    active.unsubscribe = instance.subscribe(event => this.accept(sessionId, active, event));
-    this.active.set(sessionId, active);
-    this.append(sessionId, run.id, { type: 'message', role: 'user', text });
-    void instance.send(text).then(() => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'completed', null)).catch(error => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'failed', active.cancelRequested ? null : error instanceof Error ? error.message : 'Provider failed'));
-    return { task, run };
+    if (this.starting.has(sessionId) || this.active.has(sessionId) || session.status === 'running' || session.status === 'awaiting_approval') throw new HubError('CONFLICT', 409, 'Session already has an active turn');
+    this.starting.add(sessionId);
+    try {
+      const project = this.store.project(session.projectId);
+      if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
+      const adapter = this.registry.get(session.config.provider);
+      const info = await adapter.readiness();
+      if (!info.ready) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
+      const instance = await adapter.start({ cwd: project.path, config: session.config, providerSessionId: session.providerSessionId });
+      const now = new Date().toISOString();
+      const task: Task = { id: randomUUID(), sessionId, prompt: redactStoredText(text), createdAt: now };
+      const run: TaskRun = { id: randomUUID(), taskId: task.id, sessionId, status: 'running', startedAt: now, finishedAt: null, error: null };
+      this.store.saveTask(task);
+      this.store.saveRun(run);
+      this.setStatus(sessionId, 'running', instance.providerSessionId);
+      const active: Active = { adapter: instance, runId: run.id, unsubscribe: () => {}, finished: false, cancelRequested: false };
+      active.unsubscribe = instance.subscribe(event => this.accept(sessionId, active, event));
+      this.active.set(sessionId, active);
+      this.append(sessionId, run.id, { type: 'message', role: 'user', text });
+      void instance.send(text).then(() => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'completed', null)).catch(error => this.finish(sessionId, active, active.cancelRequested ? 'cancelled' : 'failed', active.cancelRequested ? null : error instanceof Error ? error.message : 'Provider failed'));
+      return { task, run };
+    } finally {
+      this.starting.delete(sessionId);
+    }
   }
   private append(sessionId: string, runId: string, event: NewAgentEvent): AgentEvent {
     const full = this.store.appendEvent(sessionId, runId, event);
@@ -116,6 +122,7 @@ export class SessionManager {
   async cancel(id: string): Promise<Session> {
     const session = this.store.session(id);
     if (!session) throw new HubError('NOT_FOUND', 404, 'Session not found');
+    if (this.starting.has(id)) throw new HubError('CONFLICT', 409, 'Session is starting; retry cancellation');
     const active = this.active.get(id);
     if (active) {
       active.cancelRequested = true;
@@ -143,7 +150,7 @@ export class SessionManager {
     return next;
   }
   async close(): Promise<void> {
-    await Promise.all([...this.active.entries()].map(async ([id, active]) => {
+    await Promise.allSettled([...this.active.entries()].map(async ([id, active]) => {
       active.cancelRequested = true;
       try { await active.adapter.cancel(); } finally { this.finish(id, active, 'cancelled', null); }
     }));

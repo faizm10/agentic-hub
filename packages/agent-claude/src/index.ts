@@ -26,6 +26,16 @@ export function normalizeClaudeMessage(message: SDKMessage): NewAgentEvent[] {
   return events;
 }
 
+export function describeClaudeApproval(toolName: string, input: Record<string, unknown>, title?: string, description?: string): string {
+  const detail = toolName === 'Bash' && typeof input.command === 'string'
+    ? input.command
+    : typeof input.file_path === 'string' ? input.file_path
+    : typeof input.path === 'string' ? input.path
+    : '';
+  // The full tool input can include file contents, credentials, and model output.
+  return [title || description || `${toolName} requires approval`, detail].filter(Boolean).join(' — ').slice(0, 2_000);
+}
+
 export class ClaudeSession implements AdapterSession {
   readonly events = new EventEmitter();
   providerSessionId: string | null;
@@ -40,9 +50,9 @@ export class ClaudeSession implements AdapterSession {
     return () => this.events.off('event', listener);
   }
   private emit(event: NewAgentEvent): void { this.events.emit('event', event); }
-  private readonly canUseTool: CanUseTool = async (toolName, _input, options) => {
+  private readonly canUseTool: CanUseTool = async (toolName, input, options) => {
     const id = randomUUID();
-    const description = options.title ?? options.description ?? `${toolName} requires approval`;
+    const description = describeClaudeApproval(toolName, input, options.title, options.description);
     this.emit({ type: 'approval_requested', approval: { id, sessionId: '', taskRunId: '', toolName, description, status: 'pending', createdAt: new Date().toISOString(), resolvedAt: null } });
     const decision = await new Promise<ApprovalDecision>((resolve) => {
       this.approvals.set(id, resolve);
@@ -97,10 +107,12 @@ export class ClaudeAdapter implements AgentAdapter {
   async readiness(): Promise<ProviderInfo> {
     try {
       await exec('claude', ['--version'], { timeout: 5_000 });
-      const { stdout } = await exec('claude', ['auth', 'status'], { timeout: 5_000 });
+    } catch { return { provider: this.provider, displayName: 'Claude Code', capabilities: this.capabilities, installed: false, authenticated: false, ready: false, reason: 'Claude Code CLI is unavailable' }; }
+    try {
+      const { stdout } = await exec('claude', ['auth', 'status'], { timeout: 5_000 }).catch(error => ({ stdout: String(error.stdout ?? '') }));
       const auth = JSON.parse(stdout) as { loggedIn?: boolean };
       return { provider: this.provider, displayName: 'Claude Code', capabilities: this.capabilities, installed: true, authenticated: auth.loggedIn === true, ready: auth.loggedIn === true, ...(auth.loggedIn ? {} : { reason: 'Claude Code is not signed in' }) };
-    } catch { return { provider: this.provider, displayName: 'Claude Code', capabilities: this.capabilities, installed: false, authenticated: false, ready: false, reason: 'Claude Code CLI is unavailable' }; }
+    } catch { return { provider: this.provider, displayName: 'Claude Code', capabilities: this.capabilities, installed: true, authenticated: false, ready: false, reason: 'Claude Code authentication could not be verified' }; }
   }
   async start(input: { cwd: string; config: AgentConfig; providerSessionId: string | null }): Promise<AdapterSession> {
     return new ClaudeSession(input.cwd, input.config.model, input.providerSessionId);
