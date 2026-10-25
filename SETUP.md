@@ -4,7 +4,7 @@ What you need to provide to get everything live, and where each value goes. Noth
 
 ## 1. Web app on Vercel — done
 
-Configured on 2026-10-25:
+Live at **https://agentic-hub-nu.vercel.app** (health check: `/api/health`). Configured on 2026-10-25:
 
 - Project `agentic-hub` on team **faizm10's projects**, root directory `apps/web`, Next.js, Node 24, connected to `github.com/faizm10/agentic-hub` (pushes to `main` deploy to production).
 - **Neon Postgres** (`agentic-hub-db`) from the Marketplace, connected to Production, Preview and Development (sets `DATABASE_URL` and friends).
