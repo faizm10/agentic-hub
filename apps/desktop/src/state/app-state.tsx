@@ -1,7 +1,7 @@
 import { safeStorage, type AgentId } from "@agentic-hub/ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-export type View = "welcome" | "repositories" | "workspace" | "code" | "board" | "usage" | "history" | "review" | "providers" | "activity" | "settings";
+export type View = "welcome" | "repositories" | "workspace" | "code" | "board" | "usage" | "history" | "review" | "providers" | "settings";
 export type DataMode = "demo" | "live";
 
 export interface Preferences {
@@ -11,6 +11,8 @@ export interface Preferences {
   activeSessionId?: string;
   sidebarOpen: boolean;
   inspectorOpen: boolean;
+  /** GitHub & Vercel panel on the right. */
+  integrationsOpen: boolean;
   defaultAgent: AgentId;
   /** Last model picked per agent; unset means the provider default. */
   models: Partial<Record<AgentId, string>>;
@@ -31,6 +33,7 @@ const DEFAULTS: Preferences = {
   dataMode: "live",
   sidebarOpen: true,
   inspectorOpen: true,
+  integrationsOpen: false,
   defaultAgent: "claude-code",
   models: {},
   bottomPanelOpen: true,

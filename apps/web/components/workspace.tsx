@@ -18,7 +18,9 @@ import {
   ErrorState,
   ModelSelector,
   MultiAgentBoard,
-  MultiAgentPicker,
+  MultiAgentComposer,
+  initialAssignments,
+  type AgentAssignment,
   NewChatHero,
   ProjectSidebar,
   ProviderSettings,
@@ -127,6 +129,7 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
   const resolve = useResolveApproval(prefs.sessionId);
   const create = useCreateSession();
   const startMany = useStartMultiAgent();
+  const [multiDraft, setMultiDraft] = useState<{ goal: string; assignments: AgentAssignment[] | null }>({ goal: "", assignments: null });
   const queue = useQueuedMessages(view === "chat" ? prefs.sessionId : undefined);
   const removeQueued = useRemoveQueuedMessage(prefs.sessionId);
   const [usageDays, setUsageDays] = useState(30);
@@ -233,9 +236,11 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
     }
     if (!prefs.sessionId) {
       const multi = Boolean(prefs.multiAgent);
-      const selected = (prefs.multiAgents ?? ["claude-code", "codex"]).filter((id) => allowedAgents.some((a) => a.id === id) && projectProviders?.find((p) => p.agentId === id)?.status === "ready");
+      const readyIds = allowedAgents.filter((a) => projectProviders?.find((p) => p.agentId === a.id)?.status === "ready").map((a) => a.id);
+      const preferred = prefs.multiAgents ?? ["claude-code", "codex"];
+      const assignments = multiDraft.assignments ?? initialAssignments([...preferred.filter((id) => readyIds.includes(id)), ...readyIds.filter((id) => !preferred.includes(id))].slice(0, 2));
       const agentWork = !cloud && !deviceModelChat;
-      const blocked = multi && selected.length < 2 ? "Pick at least two ready agents to run in parallel." : multi ? (deviceId ? client.deviceControl(deviceId).reason : undefined) : !allowedAgents.length
+      const blocked = multi ? (deviceId ? client.deviceControl(deviceId).reason : undefined) : !allowedAgents.length
         ? "This computer hasn't reported any agents yet."
         : agentProvider && agentProvider.status !== "ready"
           ? agentProvider.detail ?? `${AGENT_DISPLAY[composerAgent].name} isn't ready.`
@@ -243,6 +248,20 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
             ? client.deviceControl(deviceId).reason
             : undefined;
       const kind = AGENT_DISPLAY[composerAgent].kind;
+      const multiToggle = (
+        <Tooltip content={multi ? "Back to one agent" : "Split work across several agents, each with its own task"}>
+          <button type="button" aria-pressed={multi} onClick={() => setPrefs({ multiAgent: !multi })} className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-ring", multi ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}>
+            <Users className="size-3.5" /> Multi
+          </button>
+        </Tooltip>
+      );
+      const worktreeToggle = agentWork ? (
+        <Tooltip content={prefs.isolate ? "Each coding agent works on its own branch in its own Git worktree on your computer" : "Runs in the computer's current checkout"}>
+          <button type="button" aria-pressed={Boolean(prefs.isolate)} onClick={() => setPrefs({ isolate: !prefs.isolate })} className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-ring", prefs.isolate ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}>
+            <GitFork className="size-3.5" /> {prefs.isolate ? "Worktree" : "Local"}
+          </button>
+        </Tooltip>
+      ) : null;
       return (
         <>
           <header className="flex h-12 shrink-0 items-center gap-2 px-2">{toolbar}</header>
@@ -253,23 +272,48 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
               <>
                 <NewChatHero
                   kind={kind}
-                  title={cloud || deviceModelChat ? "What’s on your mind?" : "What should we build today?"}
+                  title={multi ? "Split the work across agents" : cloud || deviceModelChat ? "What’s on your mind?" : "What should we build today?"}
                   subtitle={project && !cloud && !deviceModelChat ? <span className="font-mono text-xs">{project.path}</span> : undefined}
-                  onSuggestion={blocked ? undefined : (prompt) => composerRef.current?.setText(prompt)}
+                  onSuggestion={multi || blocked ? undefined : (prompt) => composerRef.current?.setText(prompt)}
                   className="mb-8"
                 />
+                {multi ? (
+                  <MultiAgentComposer
+                    agents={allowedAgents}
+                    providers={projectProviders}
+                    assignments={assignments}
+                    onAssignmentsChange={(next) => setMultiDraft((d) => ({ ...d, assignments: next }))}
+                    goal={multiDraft.goal}
+                    onGoalChange={(goal) => setMultiDraft((d) => ({ ...d, goal }))}
+                    disabledReason={blocked}
+                    toolbar={<>{multiToggle}{worktreeToggle}</>}
+                    footer={actionError ? <span className="text-danger">{actionError}</span> : <span>Each agent gets its own task and knows what the others are doing.</span>}
+                    onSubmit={async () => {
+                      if (!project) return;
+                      setActionError(null);
+                      const result = await startMany.mutateAsync({
+                        projectId: project.id, goal: multiDraft.goal, isolate: Boolean(prefs.isolate),
+                        assignments: assignments.map((a) => ({ ...a, kind: AGENT_DISPLAY[a.agentId].kind, model: prefs.models[a.agentId] })),
+                      });
+                      const failed = result.failures.map((f) => `${AGENT_DISPLAY[f.agentId].name} (“${f.task.slice(0, 40)}”): ${f.message}`).join(" · ");
+                      if (!result.sessions.length) {
+                        setActionError(failed);
+                        throw new Error(failed);
+                      }
+                      if (failed) setActionError(`Didn't start: ${failed}`);
+                      setPrefs({ boardSessionIds: result.sessions.map((s) => s.id), sessionId: undefined, multiAgents: [...new Set(assignments.map((a) => a.agentId))] });
+                      setMultiDraft({ goal: "", assignments: null });
+                      setView("board");
+                    }}
+                  />
+                ) : (
                 <ChatComposer
                   ref={composerRef}
-                  placeholder={multi ? `Describe a task for ${selected.length} agents to work on in parallel…` : `Message ${AGENT_DISPLAY[composerAgent].name}…`}
+                  placeholder={`Message ${AGENT_DISPLAY[composerAgent].name}…`}
                   disabledReason={blocked}
                   toolbar={
                     <>
-                      <Tooltip content={multi ? "Back to one agent" : "Run several agents on the same prompt, side by side"}>
-                        <button type="button" aria-pressed={multi} onClick={() => setPrefs({ multiAgent: !multi })} className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-ring", multi ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}>
-                          <Users className="size-3.5" /> Multi
-                        </button>
-                      </Tooltip>
-                      {multi ? <MultiAgentPicker agents={allowedAgents} providers={projectProviders} value={selected} onChange={(multiAgents) => setPrefs({ multiAgents })} /> : (
+                      {multiToggle}
                       <AgentSelector
                         agents={allowedAgents}
                         providers={projectProviders}
@@ -278,24 +322,15 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                         onManageProviders={() => setView("providers")}
                         disabled={!allowedAgents.length}
                       />
-                      )}
-                      {agentWork ? (
-                        <Tooltip content={prefs.isolate ? "Runs on a new branch in its own Git worktree on your computer" : "Runs in the computer's current checkout"}>
-                          <button type="button" aria-pressed={Boolean(prefs.isolate)} onClick={() => setPrefs({ isolate: !prefs.isolate })} className={cn("inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors focus-ring", prefs.isolate ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}>
-                            <GitFork className="size-3.5" /> {prefs.isolate ? "Worktree" : "Local"}
-                          </button>
-                        </Tooltip>
-                      ) : null}
-                      {!multi ? (
-                        <ModelSelector
-                          models={models.data}
-                          value={prefs.models[composerAgent]}
-                          loading={models.isLoading}
-                          error={models.isError ? `Couldn't list models: ${errorMessage(models.error)}` : undefined}
-                          disabled={!modelsEnabled}
-                          onChange={(id) => setPrefs({ models: { ...prefs.models, [composerAgent]: id } })}
-                        />
-                      ) : null}
+                      {worktreeToggle}
+                      <ModelSelector
+                        models={models.data}
+                        value={prefs.models[composerAgent]}
+                        loading={models.isLoading}
+                        error={models.isError ? `Couldn't list models: ${errorMessage(models.error)}` : undefined}
+                        disabled={!modelsEnabled}
+                        onChange={(id) => setPrefs({ models: { ...prefs.models, [composerAgent]: id } })}
+                      />
                     </>
                   }
                   footer={
@@ -314,18 +349,6 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                   onSubmit={async (prompt) => {
                     if (!project) return;
                     setActionError(null);
-                    if (multi) {
-                      const result = await startMany.mutateAsync({ projectId: project.id, prompt, isolate: Boolean(prefs.isolate), agents: selected.map((agentId) => ({ agentId, kind: AGENT_DISPLAY[agentId].kind, model: prefs.models[agentId] })) });
-                      const failed = result.failures.map((f) => `${AGENT_DISPLAY[f.agentId].name}: ${f.message}`).join(" · ");
-                      if (!result.sessions.length) {
-                        setActionError(failed);
-                        throw new Error(failed);
-                      }
-                      if (failed) setActionError(failed);
-                      setPrefs({ boardSessionIds: result.sessions.map((s) => s.id), sessionId: undefined });
-                      setView("board");
-                      return;
-                    }
                     try {
                       const created = await create.mutateAsync({ projectId: project.id, agentId: composerAgent, model: prefs.models[composerAgent], prompt, isolation: agentWork && prefs.isolate ? "worktree" : "none" });
                       setPrefs({ sessionId: created.id, projectId: project.id });
@@ -335,6 +358,7 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                     }
                   }}
                 />
+                )}
               </>
             )}
           </div>

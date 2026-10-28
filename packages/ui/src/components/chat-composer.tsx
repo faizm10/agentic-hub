@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUp, Square } from "lucide-react";
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { Button } from "../primitives/button";
 import { Kbd } from "../primitives/kbd";
@@ -36,6 +36,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
 ) {
   const [value, setValue] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const inputId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(
     ref,
@@ -88,11 +89,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
           disabled && "opacity-70",
         )}
       >
-        <label htmlFor="agent-prompt" className="sr-only">
+        <label htmlFor={inputId} className="sr-only">
           Message the agent
         </label>
         <textarea
-          id="agent-prompt"
+          id={inputId}
           ref={textareaRef}
           rows={1}
           value={value}

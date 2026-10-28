@@ -28,11 +28,11 @@ import { isRunActive } from "@agentic-hub/ui/model";
 import { AGENT_DISPLAY } from "@agentic-hub/ui/model";
 import { Activity, BarChart3, Code2, Columns3, FileDiff, FolderOpen, GitFork, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, SquareTerminal, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { UpdatePill } from "./components/UpdateControls";
 import { platform, isTauri } from "./platform/native";
 import { startAutomaticUpdateChecks } from "./platform/updater";
 import { HistoryScreen } from "./screens/HistoryScreen";
-import { ActivityScreen } from "./screens/ActivityScreen";
 import { CodeScreen } from "./screens/CodeScreen";
 import { UsageScreen } from "./screens/UsageScreen";
 import { ScreenHeader } from "./screens/ScreenHeader";
@@ -64,13 +64,16 @@ export function Shell() {
   const compact = useMediaQuery("(max-width: 899px)");
   // Drawers close whenever the window mode, screen or session changes (derived, not effect-driven).
   const drawerKey = `${compact}|${view}|${prefs.activeSessionId ?? ""}`;
-  const [drawerState, setDrawerState] = useState<{ key: string; open: "sidebar" | "inspector" | null }>({ key: "", open: null });
+  const [drawerState, setDrawerState] = useState<{ key: string; open: "sidebar" | "inspector" | "integrations" | null }>({ key: "", open: null });
   const drawer = drawerState.key === drawerKey ? drawerState.open : null;
-  const setDrawer = (open: "sidebar" | "inspector" | null) => setDrawerState({ key: drawerKey, open });
+  const setDrawer = (open: "sidebar" | "inspector" | "integrations" | null) => setDrawerState({ key: drawerKey, open });
   const sidebarOpen = compact ? drawer === "sidebar" : prefs.sidebarOpen;
   const inspectorOpen = compact ? drawer === "inspector" : prefs.inspectorOpen;
+  const integrationsOpen = compact ? drawer === "integrations" : prefs.integrationsOpen;
   const setSidebarOpen = (open: boolean) => (compact ? setDrawer(open ? "sidebar" : null) : setPrefs({ sidebarOpen: open }));
-  const setInspectorOpen = (open: boolean) => (compact ? setDrawer(open ? "inspector" : null) : setPrefs({ inspectorOpen: open }));
+  // The review panel and the GitHub & Vercel panel share the right side; opening one closes the other.
+  const setInspectorOpen = (open: boolean) => (compact ? setDrawer(open ? "inspector" : null) : setPrefs(open ? { inspectorOpen: true, integrationsOpen: false } : { inspectorOpen: false }));
+  const setIntegrationsOpen = (open: boolean) => (compact ? setDrawer(open ? "integrations" : null) : setPrefs({ integrationsOpen: open }));
 
   const activeProject = projects.data?.find((p) => p.id === prefs.activeProjectId) ?? projects.data?.find((p) => p.id !== MODEL_CHAT_PROJECT_ID) ?? projects.data?.[0];
   const modelChats = projects.data?.find((p) => p.id === MODEL_CHAT_PROJECT_ID);
@@ -107,7 +110,8 @@ export function Shell() {
       },
     },
     { keys: "mod+b", handler: () => setSidebarOpen(!sidebarOpen) },
-    { keys: "mod+j", handler: () => setInspectorOpen(!inspectorOpen) },
+    { keys: "mod+j", handler: () => setInspectorOpen(!inspectorOpen || integrationsOpen) },
+    { keys: "mod+shift+g", handler: () => setIntegrationsOpen(!integrationsOpen) },
     { keys: "mod+,", handler: () => navigate("settings") },
     { keys: "mod+y", handler: () => navigate("history") },
     { keys: "mod+shift+d", handler: () => openReview(), enabled: Boolean(snapshot.data?.changes.length) },
@@ -145,10 +149,10 @@ export function Shell() {
         icon: <Columns3 />,
         run: () => { setPrefs({ multiAgent: !prefs.multiAgent }); newSession(); },
       },
-      { id: "activity", group: "Navigate", label: "GitHub & Vercel", hint: "pull requests, issues, deployments", icon: <Activity />, run: () => navigate("activity") },
+      { id: "activity", group: "Navigate", label: integrationsOpen ? "Hide GitHub & Vercel panel" : "Show GitHub & Vercel panel", hint: "pull requests, issues, deployments", icon: <Activity />, shortcut: "mod+shift+g", run: () => setIntegrationsOpen(!integrationsOpen) },
       { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => navigate("settings") },
       { id: "sidebar", group: "View", label: "Toggle sidebar", icon: <PanelLeft />, shortcut: "mod+b", run: () => setSidebarOpen(!sidebarOpen) },
-      { id: "inspector", group: "View", label: "Toggle review panel", icon: <PanelRight />, shortcut: "mod+j", run: () => setInspectorOpen(!inspectorOpen) },
+      { id: "inspector", group: "View", label: "Toggle review panel", icon: <PanelRight />, shortcut: "mod+j", run: () => setInspectorOpen(!inspectorOpen || integrationsOpen) },
       {
         id: "theme",
         group: "View",
@@ -171,7 +175,7 @@ export function Shell() {
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.data, projects.data, activeProject, sidebarOpen, inspectorOpen, compact, resolved, snapshot.data?.changes.length, prefs.isolateSessions, prefs.multiAgent, prefs.boardSessionIds.length]);
+  }, [sessions.data, projects.data, activeProject, sidebarOpen, inspectorOpen, integrationsOpen, compact, resolved, snapshot.data?.changes.length, prefs.isolateSessions, prefs.multiAgent, prefs.boardSessionIds.length]);
 
   const panelToggles = (
     <div className="flex items-center gap-0.5">
@@ -181,12 +185,17 @@ export function Shell() {
         </Button>
       </Tooltip>
       {view === "workspace" && snapshot.data ? (
-        <Tooltip content={inspectorOpen ? "Hide review panel" : "Show review panel"} shortcut="mod+j">
-          <Button variant="ghost" size="icon" aria-label="Toggle review panel" aria-pressed={inspectorOpen} onClick={() => setInspectorOpen(!inspectorOpen)}>
+        <Tooltip content={inspectorOpen && !integrationsOpen ? "Hide review panel" : "Show review panel"} shortcut="mod+j">
+          <Button variant="ghost" size="icon" aria-label="Toggle review panel" aria-pressed={inspectorOpen && !integrationsOpen} onClick={() => setInspectorOpen(!inspectorOpen || integrationsOpen)}>
             <PanelRight />
           </Button>
         </Tooltip>
       ) : null}
+      <Tooltip content={integrationsOpen ? "Hide GitHub & Vercel" : "Show GitHub & Vercel"} shortcut="mod+shift+g">
+        <Button variant="ghost" size="icon" aria-label="Toggle GitHub & Vercel panel" aria-pressed={integrationsOpen} onClick={() => setIntegrationsOpen(!integrationsOpen)}>
+          <Activity />
+        </Button>
+      </Tooltip>
     </div>
   );
 
@@ -200,8 +209,6 @@ export function Shell() {
         return <ReviewScreen toolbar={panelToggles} snapshot={snapshot.data} />;
       case "providers":
         return <ProvidersScreen toolbar={panelToggles} />;
-      case "activity":
-        return <ActivityScreen toolbar={panelToggles} project={activeProject} session={session} />;
       case "usage":
         return <UsageScreen toolbar={panelToggles} />;
       case "board":
@@ -259,9 +266,14 @@ export function Shell() {
           />
         }
         sidebarOpen={sidebarOpen}
-        inspectorOpen={showInspector && inspectorOpen}
+        inspectorOpen={integrationsOpen || (showInspector && inspectorOpen)}
         onSidebarOpenChange={setSidebarOpen}
-        onInspectorOpenChange={(open) => showInspector && setInspectorOpen(open)}
+        onInspectorOpenChange={(open) => {
+          if (open) return;
+          // Collapsed by dragging or by tapping outside the drawer.
+          if (integrationsOpen) setIntegrationsOpen(false);
+          else if (showInspector) setInspectorOpen(false);
+        }}
         sidebar={
           <ProjectSidebar
             header={<TitlebarSpacer />}
@@ -282,14 +294,16 @@ export function Shell() {
             onOpenSettings={() => navigate("settings")}
             onOpenHistory={() => navigate("history")}
             onOpenProviders={() => navigate("providers")}
-            onOpenActivity={() => navigate("activity")}
+            onOpenActivity={() => setIntegrationsOpen(!integrationsOpen)}
             onOpenCode={() => navigate("code")}
             onOpenUsage={() => navigate("usage")}
           />
         }
         main={main}
         inspector={
-          showInspector && snapshot.data ? (
+          integrationsOpen ? (
+            <IntegrationsPanel project={activeProject} session={session} onClose={() => setIntegrationsOpen(false)} />
+          ) : showInspector && snapshot.data ? (
             <SessionInspector
               snapshot={snapshot.data}
               project={activeProject}

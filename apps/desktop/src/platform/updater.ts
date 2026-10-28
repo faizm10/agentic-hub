@@ -21,8 +21,12 @@ export type UpdaterState =
   | { status: "ready"; version: string }
   | { status: "error"; message: string; version?: string; notes?: string };
 
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 60 * 60 * 1000;
 const FIRST_CHECK_DELAY_MS = 8_000;
+/** Returning to the app re-checks, but not more often than this. */
+const FOCUS_RECHECK_MS = 15 * 60 * 1000;
+
+let lastCheckAt = 0;
 
 let state: UpdaterState = isTauri() ? { status: "idle" } : { status: "unsupported" };
 let pending: Update | null = null;
@@ -56,19 +60,30 @@ export function describeUpdateError(error: unknown): string {
   return raw ? `Update failed: ${raw.slice(0, 200)}` : "Update failed.";
 }
 
+/**
+ * Looks for a newer signed release and, when one exists, downloads and installs
+ * it in the background. The running app keeps working; the new version is used
+ * after "Restart to update" or the next time the app is opened.
+ */
 export async function checkForUpdate(): Promise<void> {
   if (!isTauri() || state.status === "checking" || state.status === "downloading" || state.status === "ready") return;
+  lastCheckAt = Date.now();
   set({ status: "checking" });
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check({ timeout: 20_000 });
     pending = update;
-    if (update) set({ status: "available", version: update.version, notes: update.body ?? "", date: update.date });
-    else set({ status: "idle", checkedAt: new Date().toISOString() });
+    if (!update) {
+      set({ status: "idle", checkedAt: new Date().toISOString() });
+      return;
+    }
+    set({ status: "available", version: update.version, notes: update.body ?? "", date: update.date });
   } catch (error) {
     pending = null;
     set({ status: "error", message: describeUpdateError(error) });
+    return;
   }
+  await installUpdate();
 }
 
 export async function installUpdate(): Promise<void> {
@@ -96,12 +111,15 @@ export async function restartToUpdate(): Promise<void> {
 }
 
 let started = false;
-/** Checks shortly after launch and then every few hours. Safe to call more than once. */
+/** Checks shortly after launch, every hour, and when the window regains focus. Safe to call more than once. */
 export function startAutomaticUpdateChecks() {
   if (started || !isTauri()) return;
   started = true;
   setTimeout(() => void checkForUpdate(), FIRST_CHECK_DELAY_MS);
   setInterval(() => void checkForUpdate(), CHECK_EVERY_MS);
+  window.addEventListener("focus", () => {
+    if (Date.now() - lastCheckAt >= FOCUS_RECHECK_MS) void checkForUpdate();
+  });
 }
 
 export function useUpdater(): UpdaterState {
