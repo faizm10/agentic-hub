@@ -2,9 +2,10 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { ApprovalPolicySchema, DEFAULT_APPROVAL_POLICY, MODEL_CHAT_PROJECT_ID } from '@agentic-hub/types';
-import type { ApprovalPolicy, Project, Worktree } from '@agentic-hub/types';
+import type { ApprovalPolicy, Project, UsageReport, Worktree } from '@agentic-hub/types';
 import { createWorktree } from '@agentic-hub/git';
 import { assessApproval, shouldAutoApprove } from './approval-policy.js';
+import { aggregateUsage, type UsageEntry } from './usage.js';
 import type { AgentConfig, AgentEvent, AgentProvider, ApprovalDecision, ModelInfo, NewAgentEvent, NewStreamDelta, AgentCapabilities, ProviderInfo, Session, StreamDelta, Task, TaskRun } from '@agentic-hub/types';
 import { Store, redactStoredText } from '@agentic-hub/database';
 
@@ -60,6 +61,7 @@ export function providerErrorMessage(error: unknown, provider: string): string {
 }
 
 export * from './approval-policy.js';
+export * from './usage.js';
 
 export class HubError extends Error {
   constructor(readonly code: string, readonly status: number, message: string) { super(message); }
@@ -136,6 +138,14 @@ export class SessionManager {
     this.bus.on('*', listener);
     return () => this.bus.off('*', listener);
   }
+  /** Token usage recorded by every session's providers. */
+  usageReport(options: { source: string; days?: number }): UsageReport {
+    const entries: UsageEntry[] = [];
+    for (const session of this.store.sessions()) {
+      for (const event of this.store.events(session.id)) if (event.type === 'usage') entries.push({ provider: session.config.provider, event });
+    }
+    return aggregateUsage(entries, options);
+  }
   isActive(sessionId: string): boolean { return this.active.has(sessionId) || this.starting.has(sessionId); }
   approvalPolicy(): ApprovalPolicy {
     const raw = this.store.secret('settings:approvalPolicy');
@@ -187,7 +197,7 @@ export class SessionManager {
     if (started && !this.isActive(sessionId)) void this.drainQueue(sessionId);
   }
   resumeQueues(): void { for (const sessionId of this.store.queuedSessions()) void this.drainQueue(sessionId); }
-  async create(projectId: string, config: AgentConfig, isolation: 'none' | 'worktree' = 'none'): Promise<Session> {
+  async create(projectId: string, config: AgentConfig, isolation: 'none' | 'worktree' = 'none', groupId?: string): Promise<Session> {
     const project = this.store.project(projectId);
     if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
     const adapter = this.registry.get(config.provider);
@@ -202,7 +212,7 @@ export class SessionManager {
       try { worktree = await createWorktree(project.path, join(this.options.worktreeRoot, id), `agentic/${config.provider}-${id.slice(0, 8)}`); }
       catch (error) { throw new HubError('CONFLICT', 409, `Could not create a worktree: ${error instanceof Error ? error.message.split('\n')[0] : 'git failed'}`); }
     }
-    const session: Session = { id, projectId, config, status: 'idle', providerSessionId: null, worktree, createdAt: now, updatedAt: now };
+    const session: Session = { id, projectId, config, status: 'idle', providerSessionId: null, worktree, groupId: groupId ?? null, createdAt: now, updatedAt: now };
     this.store.saveSession(session);
     return session;
   }

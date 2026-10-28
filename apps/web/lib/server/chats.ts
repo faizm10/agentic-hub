@@ -1,7 +1,8 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { anthropicReply, DEFAULT_MODELS, normalizeHistory, openaiReply, type ApiProvider, type ReplyStream } from "@agentic-hub/agent-api/providers";
-import type { AgentEvent, NewAgentEvent, Session } from "@agentic-hub/types";
+import { anthropicReply, DEFAULT_MODELS, normalizeHistory, openaiReply, type ApiProvider, type ReplyStream, type TokenUsage } from "@agentic-hub/agent-api/providers";
+import { aggregateUsage, type UsageEntry } from "@agentic-hub/agent-core/usage";
+import type { AgentEvent, NewAgentEvent, Session, UsageReport } from "@agentic-hub/types";
 import { decrypt, decryptJson, encrypt, encryptJson } from "./crypto";
 import type { Db } from "./db";
 import { HttpError } from "./http";
@@ -107,6 +108,7 @@ export async function runTurn(db: Db, userId: string, chatId: string, text: stri
   let outcome: "completed" | "failed" | "cancelled" = "completed";
   let reply = "";
   let reasoning = "";
+  let usage: TokenUsage | null = null;
   try {
     const history = (await chatEvents(db, chatId)).flatMap((e) => (e.type === "message" ? [{ role: e.role, text: e.text }] : []));
     await record({ type: "message", role: "user", text });
@@ -114,6 +116,10 @@ export async function runTurn(db: Db, userId: string, chatId: string, text: stri
     if (!apiKey) throw new HttpError(400, "NO_KEY", `Add your ${row.provider === "openai" ? "OpenAI" : "Anthropic"} API key in Settings → Providers.`);
     const streams = { text: randomUUID(), reasoning: randomUUID() };
     for await (const part of replies[row.provider]({ apiKey, model: row.model ?? DEFAULT_MODELS[row.provider], history: normalizeHistory([...history, { role: "user", text }]), signal })) {
+      if (part.kind === "usage") {
+        usage = part.usage;
+        continue;
+      }
       if (part.kind === "text") reply += part.delta;
       else reasoning += part.delta;
       emit({ event: "delta", data: { streamId: streams[part.kind], kind: part.kind, delta: part.delta } });
@@ -128,9 +134,24 @@ export async function runTurn(db: Db, userId: string, chatId: string, text: stri
   } finally {
     if (reasoning.trim()) await record({ type: "reasoning_summary", text: reasoning.trim() }).catch(() => {});
     if (reply.trim()) await record({ type: "message", role: "assistant", text: reply }).catch(() => {});
+    if (usage) await record(usageEvent(usage)).catch(() => {});
     await record({ type: "completed", outcome, summary: null }).catch(() => {});
     await db.query("UPDATE chats SET status = $2, updated_at = now() WHERE id = $1", [chatId, outcome]);
   }
+}
+
+function usageEvent(usage: TokenUsage): NewAgentEvent {
+  return { type: "usage", model: usage.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens, reasoningTokens: usage.reasoningTokens, costUsd: null, cumulative: false };
+}
+
+/** Token usage of this user's web chats over the last `days`. */
+export async function webChatUsage(db: Db, userId: string, days: number): Promise<UsageReport> {
+  const chats = await db.query<{ id: string; provider: ApiProvider }>("SELECT id, provider FROM chats WHERE user_id = $1 AND updated_at > now() - make_interval(days => $2)", [userId, days]);
+  const entries: UsageEntry[] = [];
+  for (const chat of chats) {
+    for (const event of await chatEvents(db, chat.id)) if (event.type === "usage") entries.push({ provider: chat.provider, event });
+  }
+  return aggregateUsage(entries, { source: "Web chats", days });
 }
 
 /** Marks chats stuck in `running` (e.g. after a function timeout) as interrupted. */

@@ -88,6 +88,8 @@ export interface SessionSummary {
   messageCount: number;
   /** Set when the session runs in its own Git worktree. */
   worktree?: { path: string; branch: string };
+  /** Shared by sessions started together in a multi-agent run. */
+  groupId?: string;
 }
 
 export type ToolKind = "shell" | "read" | "edit" | "write" | "search" | "web" | "test" | "other";
@@ -202,6 +204,8 @@ export interface SessionSnapshot {
   tests: TestRun[];
   /** Sequence number of the last event folded into this snapshot. */
   lastSeq: number;
+  /** Token usage per model reported during this session. */
+  usage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number | null }>;
 }
 
 export type ProviderStatus = "ready" | "needs_auth" | "not_installed" | "error" | "unknown";
@@ -272,6 +276,8 @@ export type {
   Job,
   QueuedMessage,
   ToolCheck,
+  UsageReport,
+  UsageTotals,
   VercelDeployment,
   VercelOverview,
 } from "@agentic-hub/types";

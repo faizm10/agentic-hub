@@ -188,3 +188,32 @@ export function useIntegrationAction(projectId: string | undefined, sessionId?: 
     },
   });
 }
+
+export function useUsage(days: number, enabled = true) {
+  const client = useClient();
+  return useQuery({ queryKey: ["usage", days], queryFn: () => client.getUsage({ days }), enabled, staleTime: 30_000, refetchInterval: 60_000 });
+}
+
+/**
+ * Starts the same prompt with several agents at once. Coding agents each get
+ * their own worktree (when `isolate`) so they never edit the same checkout.
+ * Sessions share a group id; failures are reported per agent.
+ */
+export function useStartMultiAgent() {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { projectId: string; prompt: string; agents: { agentId: import("../model/types").AgentId; model?: string; kind: "agent" | "model" }[]; isolate: boolean }) => {
+      const groupId = crypto.randomUUID();
+      const results = await Promise.allSettled(
+        input.agents.map((a) =>
+          client.createSession({ projectId: input.projectId, agentId: a.agentId, model: a.model, prompt: input.prompt, groupId, isolation: a.kind === "agent" && input.isolate ? "worktree" : "none" }),
+        ),
+      );
+      const sessions = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      const failures = results.flatMap((r, i) => (r.status === "rejected" ? [{ agentId: input.agents[i]!.agentId, message: r.reason instanceof Error ? r.reason.message : String(r.reason) }] : []));
+      return { groupId, sessions, failures };
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+}

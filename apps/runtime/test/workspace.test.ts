@@ -44,7 +44,7 @@ async function setup() {
     return { status: response.status, body: await response.json() as T };
   };
   const { body } = await call<{ project: Project }>('/projects', { method: 'POST', body: { path: repo } });
-  return { dir, repo, store, server, call, project: body.project, close: () => { server.close(); store.close(); } };
+  return { dir, repo, store, manager, server, call, project: body.project, close: () => { server.close(); store.close(); } };
 }
 
 describe('workspace API', () => {
@@ -113,6 +113,25 @@ describe('workspace API', () => {
       expect(main.body.entries.map(e => e.name)).not.toContain('only-here.txt');
       const diff = await ws.call<{ diff: { files: { path: string }[] } }>(`/sessions/${created.body.session.id}/diff`);
       expect(diff.body.diff.files.map(f => f.path)).toEqual(['only-here.txt']);
+    } finally { ws.close(); }
+  });
+
+  it('groups sessions and reports usage per provider and model', async () => {
+    const ws = await setup();
+    try {
+      const groupId = '11111111-2222-4333-8444-555555555555';
+      const created = await ws.call<{ session: Session }>('/sessions', { method: 'POST', body: { projectId: ws.project.id, config: { provider: 'codex', model: 'gpt-5.5-codex' }, groupId } });
+      expect(created.body.session.groupId).toBe(groupId);
+      const run = '22222222-3333-4444-8555-666666666666';
+      const now = new Date().toISOString();
+      const taskId = '33333333-4444-4555-8666-777777777777';
+      ws.store.saveTask({ id: taskId, sessionId: created.body.session.id, prompt: 'p', createdAt: now });
+      ws.store.saveRun({ id: run, taskId, sessionId: created.body.session.id, status: 'completed', startedAt: now, finishedAt: now, error: null });
+      const usage = { type: 'usage' as const, model: 'gpt-5.5-codex', cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, costUsd: null, cumulative: true };
+      ws.store.appendEvent(created.body.session.id, run, { ...usage, inputTokens: 100, outputTokens: 10 });
+      ws.store.appendEvent(created.body.session.id, run, { ...usage, inputTokens: 250, outputTokens: 40 });
+      const report = await ws.call<{ usage: { byModel: { provider: string; model: string; inputTokens: number; outputTokens: number; turns: number }[] } }>('/usage?days=7');
+      expect(report.body.usage.byModel).toEqual([expect.objectContaining({ provider: 'codex', model: 'gpt-5.5-codex', inputTokens: 250, outputTokens: 40, turns: 2 })]);
     } finally { ws.close(); }
   });
 

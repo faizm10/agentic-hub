@@ -131,3 +131,14 @@ File paths are relative to the checkout. Absolute paths, `..`, symlinks that res
 ### Approval policy
 
 `approvalPolicy = { mode: "ask" | "trusted", autoApproveFileEdits, trustedCommands[] }`. Every `approval_requested` event carries `risk` (`low`/`medium`/`high`) and `riskReasons` from the runtime's classifier (`packages/agent-core/src/approval-policy.ts`). In `trusted` mode only **low** risk requests are approved automatically (marked `autoApproved: true`): read-only tools, built-in or user-trusted command prefixes without shell chaining, and, if enabled, file edits inside the checkout. High risk (recursive/forced deletes, `sudo`, `git push`, history rewrites, deploys, publishes, `chmod`/`chown`, secrets and credentials, `curl | sh`, CI workflow edits, destructive SQL, infrastructure changes) always waits for the user. Before v0.3, `autoApprove: true` approved everything; it now maps to `trusted`.
+
+## Usage, groups and queues (v0.3)
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/usage?days=30` | `{ usage: UsageReport }`: `byModel` (provider, model, input/output/cache/reasoning tokens, provider-reported `costUsd` or null, turns, sessions) and `daily` UTC buckets per provider |
+| POST | `/sessions` | also accepts `groupId` (uuid); sessions of one multi-agent run share it |
+
+Adapters emit `usage` events: OpenAI and Anthropic per reply (`cumulative: false`), Claude Code per model from each `result` (running totals with cost), Codex from `thread/tokenUsage/updated` totals at turn end. Aggregation counts only the increase of cumulative totals per session and model (a smaller value is treated as a counter reset).
+
+Device sync snapshots now include `models` (per ready coding agent), `queues` (queued messages per session) and `usage`. New device commands: `create_session` accepts `isolation` and `groupId`; `remove_queued { sessionId, messageId }`. The web app serves `GET /api/usage?days=` combining web-chat usage with each computer's latest report.

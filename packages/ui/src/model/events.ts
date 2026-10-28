@@ -27,6 +27,8 @@ export type SessionEventPayload =
   | { type: "approval.resolved"; approvalId: string; decision: ApprovalDecision | "expired" }
   | { type: "run.status"; status: RunStatus }
   | { type: "files.changed"; changes: FileChange[] }
+  /** Token usage for one model; `cumulative` values replace the running total. */
+  | { type: "usage"; model: string; inputTokens: number; outputTokens: number; costUsd: number | null; cumulative: boolean }
   | { type: "tests.updated"; run: TestRun }
   | { type: "notice"; text: string; tone: "neutral" | "warning" | "danger" | "success" }
   | { type: "error"; message: string; retryable?: boolean }
@@ -231,6 +233,13 @@ function foldEvent(state: SessionSnapshot, event: SessionEvent): SessionSnapshot
     }
     case "files.changed":
       return { ...base, changes: event.changes };
+    case "usage": {
+      const prev = state.usage?.[event.model];
+      const next = event.cumulative || !prev
+        ? { inputTokens: event.inputTokens, outputTokens: event.outputTokens, costUsd: event.costUsd }
+        : { inputTokens: prev.inputTokens + event.inputTokens, outputTokens: prev.outputTokens + event.outputTokens, costUsd: event.costUsd === null ? prev.costUsd : (prev.costUsd ?? 0) + event.costUsd };
+      return { ...base, usage: { ...state.usage, [event.model]: next } };
+    }
     case "tests.updated": {
       const exists = state.tests.some((run) => run.id === event.run.id);
       return {

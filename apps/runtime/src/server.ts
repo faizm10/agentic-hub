@@ -103,6 +103,10 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
         if (method === 'GET' || method === 'PATCH') { send(response, 200, { autoApprove: manager.autoApprove(), approvalPolicy: manager.approvalPolicy() }); return; }
       }
       if (method === 'GET' && path === '/environment') { send(response, 200, { environment: await environmentReport(registry, url.searchParams.has('refresh')) }); return; }
+      if (method === 'GET' && path === '/usage') {
+        const days = Number(url.searchParams.get('days') ?? 30);
+        send(response, 200, { usage: manager.usageReport({ source: 'This computer', ...(Number.isInteger(days) && days > 0 && days <= 3650 ? { days } : {}) }) }); return;
+      }
       if (method === 'GET' && path === '/integrations') { send(response, 200, { integrations: await integrationStatuses() }); return; }
       if (method === 'GET' && path === '/github/repositories') { send(response, 200, { repositories: await listGitHubRepositories() }); return; }
       if (method === 'POST' && path === '/projects/clone') {
@@ -213,7 +217,7 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
       }
       if (method === 'POST' && path === '/sessions') {
         const input = CreateSessionRequestSchema.parse(await body(request));
-        send(response, 201, { session: await manager.create(input.projectId, input.config, input.isolation ?? 'none') }); return;
+        send(response, 201, { session: await manager.create(input.projectId, input.config, input.isolation ?? 'none', input.groupId) }); return;
       }
       const queuedMatch = /^\/sessions\/([0-9a-f-]{36})\/queue\/([0-9a-f-]{36})$/.exec(path);
       if (method === 'DELETE' && queuedMatch) {

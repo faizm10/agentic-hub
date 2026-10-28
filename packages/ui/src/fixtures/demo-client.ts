@@ -95,6 +95,28 @@ function buildScript(prompt: string, agentId: AgentId, runId: string): Step[] {
   );
 }
 
+/** Deterministic sample usage for the stats page (clearly labeled as sample data). */
+function demoUsage(): import("@agentic-hub/types").UsageReport {
+  const providers = [["claude", "claude-opus-5-5", 0.000015], ["codex", "gpt-5.5-codex", null], ["openai", "gpt-5.5", null], ["anthropic", "claude-sonnet-5-5", null]] as const;
+  const today = Date.now();
+  const daily: import("@agentic-hub/types").UsageReport["daily"] = [];
+  for (let d = 13; d >= 0; d--) {
+    const date = new Date(today - d * 86_400_000).toISOString().slice(0, 10);
+    providers.forEach(([provider], i) => {
+      const wave = 1 + Math.sin((d + i * 3) / 2.2) * 0.6;
+      const input = Math.round((40_000 - i * 8_000) * wave);
+      daily.push({ date, provider, inputTokens: input, outputTokens: Math.round(input / 6), cacheReadTokens: Math.round(input * 1.8), cacheWriteTokens: 0, reasoningTokens: Math.round(input / 20), costUsd: provider === "claude" ? +(input * 0.000015).toFixed(4) : null, turns: 3 + ((d + i) % 5) });
+    });
+  }
+  const byModel = providers.map(([provider, model]) => {
+    const rows = daily.filter((r) => r.provider === provider);
+    const sum = (k: "inputTokens" | "outputTokens" | "cacheReadTokens" | "reasoningTokens" | "turns") => rows.reduce((t, r) => t + r[k], 0);
+    const cost = rows.reduce((t, r) => t + (r.costUsd ?? 0), 0);
+    return { provider, model, sessions: 6, inputTokens: sum("inputTokens"), outputTokens: sum("outputTokens"), cacheReadTokens: sum("cacheReadTokens"), cacheWriteTokens: 0, reasoningTokens: sum("reasoningTokens"), costUsd: provider === "claude" ? +cost.toFixed(2) : null, turns: sum("turns") };
+  });
+  return { generatedAt: new Date().toISOString(), source: "Sample data", byModel, daily };
+}
+
 export function createDemoClient(options: DemoClientOptions = {}): AgentHubClient {
   const speed = options.speed ?? 1;
   const latency = options.latencyMs ?? 180;
@@ -231,6 +253,7 @@ export function createDemoClient(options: DemoClientOptions = {}): AgentHubClien
     listQueuedMessages: () => wait([]),
     removeQueuedMessage: () => Promise.reject(new Error(READ_ONLY)),
     getAutoApprove: () => wait(false),
+    getUsage: () => wait([demoUsage()]),
     setAutoApprove: () => Promise.reject(new Error(READ_ONLY)),
     getDeveloperActivity: () => Promise.reject(new Error(READ_ONLY)),
     updateRepository: () => Promise.reject(new Error(READ_ONLY)),

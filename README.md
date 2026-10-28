@@ -86,6 +86,9 @@ For a universal (Apple Silicon + Intel) build: `rustup target add x86_64-apple-d
 
 - **New chat** (⌘N): pick an agent or model and, if supported, a model. Suggestions fill the composer.
 - Coding agents ask for approval before commands and file changes. Each request shows a risk level. **Settings → Approvals** can auto-approve low-risk requests (read-only tools, trusted commands such as `pnpm test`, optionally in-repo file edits); destructive commands, pushes, deploys, permission changes and secrets always ask.
+- **Multi** toggle in the composer: pick several agents (for example Claude Code and Codex, or OpenAI and Anthropic) and run one prompt with all of them at once. Results stream side by side on the multi-agent board; a follow-up goes to every agent. Combine with **Worktree** so coding agents never edit the same checkout.
+- **Message queue** for every agent and model: send follow-ups while a reply is still running and they're delivered in order (removable while queued). On the desktop the runtime holds the queue; on the web, paired computers queue on their side and web chats queue in the tab.
+- **Usage** (sidebar): tokens per provider and model over 7/30/90 days, daily chart, cache share, and Claude Code's reported cost. Counts come from what each provider reports for every reply (Claude Code, Codex, OpenAI and Anthropic APIs); costs are never estimated from guessed prices. The web Usage page combines web chats with each paired computer's report.
 - **Worktree** toggle in the composer (or the command palette): the agent works on a new `agentic/…` branch in its own Git worktree, so several agents can run on one repository without touching your checkout.
 - **Code** (⌘E): file explorer, Monaco editor (⌘S saves), and a terminal plus activity feed (⌘\`). Files the active agent changes are marked live; the header shows what the agent is doing and when it needs you. Switch between the main checkout and session worktrees from the header.
 - **GitHub & Vercel**: commit, push, open pull requests, review and merge, open issues, hand an issue or PR to an agent, list deployments, deploy previews or production, and read build logs (with "Fix with an agent" for failed builds). Uses your `gh` and `vercel` sign-ins; pushes, merges and deploys need an explicit confirmation that the runtime enforces.
@@ -143,6 +146,7 @@ With the Vercel CLI instead: `vercel link` (root directory `apps/web`), `vercel 
 2. Desktop app → **Settings → Web access** → enter the web address (`https://…`) and the code.
 3. The computer appears as **Online**. Its projects and sessions show up in the web sidebar, and new events sync every 2 s while you're watching (15 s otherwise).
 4. To start chats, send messages, stop runs or answer approvals from the web, turn on **Allow control from the web** on that computer. Remove a computer from **Devices** to revoke its token immediately.
+5. With control on, the web matches the desktop for agent work: Codex, Claude Code and Muse on that computer (with the computer's model list), worktree isolation, multi-agent runs, the message queue, approvals and usage. Coding agents always run on your computer, never on Vercel, so that computer must be online. The file editor, terminal and GitHub/Vercel actions stay desktop-only.
 
 Large tool outputs are truncated in the web copy (the full output stays on your computer), and file diffs are only available in the desktop app.
 

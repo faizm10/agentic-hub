@@ -57,17 +57,24 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   }, [value]);
 
   const disabled = Boolean(disabledReason);
-  const canSend = !disabled && (!running || queueWhileRunning) && !submitting && value.trim().length > 0;
+  // With queueing, a message can be sent while the previous send is still in flight.
+  const canSend = !disabled && (!running || queueWhileRunning) && (queueWhileRunning || !submitting) && value.trim().length > 0;
+  /** Serializes sends so messages typed quickly arrive (and queue) in order. */
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
 
   const submit = async () => {
     if (!canSend) return;
     const text = value.trim();
+    // Clear right away so the next message can be typed; restore on failure.
+    setValue("");
     setSubmitting(true);
+    const attempt = chain.current.then(() => onSubmit(text));
+    chain.current = attempt.catch(() => {});
     try {
-      await onSubmit(text);
-      setValue("");
+      await attempt;
     } catch {
       // Keep the draft so nothing is lost; the caller surfaces the error.
+      setValue((current) => (current.trim() ? current : text));
     } finally {
       setSubmitting(false);
     }

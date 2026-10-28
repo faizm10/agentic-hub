@@ -72,6 +72,8 @@ export const SessionSchema = z.object({
   status: SessionStatusSchema,
   providerSessionId: z.string().nullable(),
   worktree: WorktreeSchema.nullable().optional(),
+  /** Sessions started together from one prompt (multi-agent runs) share a group id. */
+  groupId: z.string().uuid().nullable().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -246,6 +248,17 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   EventBaseSchema.extend({ type: z.literal('approval_resolved'), approvalId: IdSchema, decision: ApprovalDecisionSchema }),
   EventBaseSchema.extend({ type: z.literal('file_changed'), path: z.string(), change: z.enum(['added', 'modified', 'deleted', 'renamed']) }),
   EventBaseSchema.extend({ type: z.literal('error'), code: z.string(), message: z.string() }),
+  /**
+   * Token usage reported by the provider. `cumulative` totals (Claude Code, Codex)
+   * are running totals for the session and model; aggregate by their increase.
+   */
+  EventBaseSchema.extend({
+    type: z.literal('usage'), model: z.string().nullable(),
+    inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(),
+    cacheReadTokens: z.number().nonnegative(), cacheWriteTokens: z.number().nonnegative(), reasoningTokens: z.number().nonnegative(),
+    /** Provider-reported estimate in USD, when the provider gives one. Never computed from guessed prices. */
+    costUsd: z.number().nonnegative().nullable(), cumulative: z.boolean(),
+  }),
   EventBaseSchema.extend({ type: z.literal('completed'), outcome: z.enum(['completed', 'failed', 'cancelled']), summary: z.string().nullable() }),
 ]);
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
@@ -295,6 +308,7 @@ export const CreateSessionRequestSchema = z.object({
   config: AgentConfigSchema,
   /** `worktree` runs the session on a new branch in its own Git worktree. */
   isolation: z.enum(['none', 'worktree']).optional(),
+  groupId: z.string().uuid().optional(),
 });
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
 export const SessionResponseSchema = z.object({ session: SessionSchema });
@@ -358,11 +372,18 @@ export const DeviceSnapshotSchema = z.object({
   providers: z.array(ProviderInfoSchema),
   projects: z.array(ProjectSchema),
   sessions: z.array(SessionSchema.extend({ title: z.string().nullable() })),
+  /** Models each ready coding agent offers, so the web can pick one. */
+  models: z.record(z.string(), z.array(ModelInfoSchema)).optional(),
+  /** Messages waiting behind an active turn, per session. */
+  queues: z.record(z.string(), z.array(QueuedMessageSchema)).optional(),
+  /** Token usage on this computer. */
+  usage: z.lazy(() => UsageReportSchema).optional(),
 });
 export type DeviceSnapshot = z.infer<typeof DeviceSnapshotSchema>;
 
 export const DeviceCommandSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('create_session'), projectId: IdSchema, config: AgentConfigSchema, text: z.string().min(1) }),
+  z.object({ type: z.literal('create_session'), projectId: IdSchema, config: AgentConfigSchema, text: z.string().min(1), isolation: z.enum(['none', 'worktree']).optional(), groupId: z.string().uuid().optional() }),
+  z.object({ type: z.literal('remove_queued'), sessionId: IdSchema, messageId: IdSchema }),
   z.object({ type: z.literal('send_message'), sessionId: IdSchema, text: z.string().min(1) }),
   z.object({ type: z.literal('cancel'), sessionId: IdSchema }),
   z.object({ type: z.literal('resolve_approval'), approvalId: IdSchema, decision: ApprovalDecisionSchema }),
@@ -387,3 +408,23 @@ export const PairDeviceRequestSchema = z.object({
 export type PairDeviceRequest = z.infer<typeof PairDeviceRequestSchema>;
 export const UpdatePairingRequestSchema = z.object({ allowRemoteControl: z.boolean() });
 export type UpdatePairingRequest = z.infer<typeof UpdatePairingRequestSchema>;
+
+// ── Usage ──────────────────────────────────────────────────────────────────
+
+export const UsageTotalsSchema = z.object({
+  inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(),
+  cacheReadTokens: z.number().nonnegative(), cacheWriteTokens: z.number().nonnegative(), reasoningTokens: z.number().nonnegative(),
+  /** Sum of provider-reported costs; null when no provider in the bucket reports cost. */
+  costUsd: z.number().nonnegative().nullable(),
+  turns: z.number().int().nonnegative(),
+});
+export type UsageTotals = z.infer<typeof UsageTotalsSchema>;
+export const UsageReportSchema = z.object({
+  generatedAt: TimestampSchema,
+  /** Where the numbers come from, e.g. "This Mac" or "Web chats". */
+  source: z.string(),
+  byModel: z.array(UsageTotalsSchema.extend({ provider: AgentProviderSchema, model: z.string(), sessions: z.number().int().nonnegative() })),
+  /** UTC days, oldest first. */
+  daily: z.array(UsageTotalsSchema.extend({ date: z.string(), provider: AgentProviderSchema })),
+});
+export type UsageReport = z.infer<typeof UsageReportSchema>;

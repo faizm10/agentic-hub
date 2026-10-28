@@ -15,6 +15,29 @@ const setup = (props: Partial<React.ComponentProps<typeof ChatComposer>> = {}) =
 };
 
 describe("ChatComposer", () => {
+  it("keeps typing and sends queued messages in order while a send is in flight", async () => {
+    let release!: () => void;
+    const calls: string[] = [];
+    const onSubmit = vi.fn((text: string) => {
+      calls.push(text);
+      return calls.length === 1 ? new Promise<void>((resolve) => { release = resolve; }) : Promise.resolve();
+    });
+    const { input } = setup({ onSubmit, queueWhileRunning: true, running: true });
+    await userEvent.type(input, "one{Enter}");
+    expect(input).toHaveValue("");
+    await userEvent.type(input, "two{Enter}");
+    expect(input).toHaveValue("");
+    expect(calls).toEqual(["one"]);
+    release();
+    await vi.waitFor(() => expect(calls).toEqual(["one", "two"]));
+  });
+
+  it("restores the draft when sending fails", async () => {
+    const { input } = setup({ onSubmit: vi.fn().mockRejectedValue(new Error("offline")) });
+    await userEvent.type(input, "keep me{Enter}");
+    await vi.waitFor(() => expect(input).toHaveValue("keep me"));
+  });
+
   it("submits trimmed text on Enter and clears", async () => {
     const { onSubmit, input } = setup();
     await userEvent.type(input, "  fix the bug  {Enter}");

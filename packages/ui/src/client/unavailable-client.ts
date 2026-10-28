@@ -36,6 +36,7 @@ export function createUnavailableClient(options: { label: string; detail: string
     listQueuedMessages: reject,
     removeQueuedMessage: reject,
     getAutoApprove: reject,
+    getUsage: reject,
     setAutoApprove: reject,
     getDeveloperActivity: reject,
     updateRepository: reject,

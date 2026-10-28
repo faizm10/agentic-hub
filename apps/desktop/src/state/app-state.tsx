@@ -1,7 +1,7 @@
 import { safeStorage, type AgentId } from "@agentic-hub/ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-export type View = "welcome" | "repositories" | "workspace" | "code" | "history" | "review" | "providers" | "activity" | "settings";
+export type View = "welcome" | "repositories" | "workspace" | "code" | "board" | "usage" | "history" | "review" | "providers" | "activity" | "settings";
 export type DataMode = "demo" | "live";
 
 export interface Preferences {
@@ -18,6 +18,11 @@ export interface Preferences {
   bottomPanelOpen: boolean;
   /** New coding-agent chats run in their own Git worktree. */
   isolateSessions: boolean;
+  /** New chats start several agents at once. */
+  multiAgent: boolean;
+  multiAgents: AgentId[];
+  /** Sessions shown side by side on the multi-agent board. */
+  boardSessionIds: string[];
 }
 
 const KEY = "agentic-hub.desktop.prefs.v2";
@@ -30,6 +35,9 @@ const DEFAULTS: Preferences = {
   models: {},
   bottomPanelOpen: true,
   isolateSessions: false,
+  multiAgent: false,
+  multiAgents: ["claude-code", "codex"],
+  boardSessionIds: [],
 };
 
 interface AppState {

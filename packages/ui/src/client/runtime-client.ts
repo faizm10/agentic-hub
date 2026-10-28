@@ -324,10 +324,10 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
       };
     },
 
-    async createSession({ projectId, agentId, model, prompt, isolation }) {
+    async createSession({ projectId, agentId, model, prompt, isolation, groupId }) {
       const { session } = await request<SessionResponse>(
         "/sessions",
-        json("POST", { projectId, config: { provider: toProvider(agentId), ...(model ? { model } : {}) }, ...(isolation === "worktree" ? { isolation } : {}) }),
+        json("POST", { projectId, config: { provider: toProvider(agentId), ...(model ? { model } : {}) }, ...(isolation === "worktree" ? { isolation } : {}), ...(groupId ? { groupId } : {}) }),
       );
       const project = (await projectsById()).get(projectId);
       try {
@@ -372,6 +372,9 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
       await request<SessionResponse>(`/sessions/${sessionId}/cancel`, json("POST"));
     },
 
+    async getUsage(opts) {
+      return [(await request<{ usage: import("@agentic-hub/types").UsageReport }>(`/usage?days=${opts?.days ?? 30}`)).usage];
+    },
     async getEnvironment(opts) {
       return (await request<{ environment: import("@agentic-hub/types").EnvironmentReport }>(`/environment${opts?.refresh ? "?refresh=1" : ""}`)).environment;
     },

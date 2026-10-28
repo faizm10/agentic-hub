@@ -5,6 +5,8 @@ import {
   Button,
   CommandPalette,
   ConnectionBanner,
+  EmptyState,
+  MultiAgentBoard,
   ProjectSidebar,
   SessionInspector,
   Tooltip,
@@ -24,7 +26,7 @@ import {
 } from "@agentic-hub/ui/client";
 import { isRunActive } from "@agentic-hub/ui/model";
 import { AGENT_DISPLAY } from "@agentic-hub/ui/model";
-import { Activity, Code2, FileDiff, FolderOpen, GitFork, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, SquareTerminal, Sun } from "lucide-react";
+import { Activity, BarChart3, Code2, Columns3, FileDiff, FolderOpen, GitFork, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, SquareTerminal, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { UpdatePill } from "./components/UpdateControls";
 import { platform, isTauri } from "./platform/native";
@@ -32,6 +34,8 @@ import { startAutomaticUpdateChecks } from "./platform/updater";
 import { HistoryScreen } from "./screens/HistoryScreen";
 import { ActivityScreen } from "./screens/ActivityScreen";
 import { CodeScreen } from "./screens/CodeScreen";
+import { UsageScreen } from "./screens/UsageScreen";
+import { ScreenHeader } from "./screens/ScreenHeader";
 import { ProvidersScreen } from "./screens/ProvidersScreen";
 import { RepositoryScreen } from "./screens/RepositoryScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
@@ -132,6 +136,15 @@ export function Shell() {
       { id: "review", group: "Actions", label: "Review changes", icon: <FileDiff />, shortcut: "mod+shift+d", run: () => openReview(), disabled: !snapshot.data?.changes.length },
       { id: "history", group: "Navigate", label: "All chats", icon: <History />, shortcut: "mod+y", run: () => navigate("history") },
       { id: "providers", group: "Navigate", label: "Providers", icon: <KeyRound />, run: () => navigate("providers") },
+      { id: "usage", group: "Navigate", label: "Usage and tokens", icon: <BarChart3 />, run: () => navigate("usage") },
+      { id: "board", group: "Navigate", label: "Multi-agent board", icon: <Columns3 />, run: () => navigate("board"), disabled: !prefs.boardSessionIds.length },
+      {
+        id: "multi",
+        group: "Actions",
+        label: prefs.multiAgent ? "Start new chats with one agent" : "Start new chats with several agents",
+        icon: <Columns3 />,
+        run: () => { setPrefs({ multiAgent: !prefs.multiAgent }); newSession(); },
+      },
       { id: "activity", group: "Navigate", label: "GitHub & Vercel", hint: "pull requests, issues, deployments", icon: <Activity />, run: () => navigate("activity") },
       { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => navigate("settings") },
       { id: "sidebar", group: "View", label: "Toggle sidebar", icon: <PanelLeft />, shortcut: "mod+b", run: () => setSidebarOpen(!sidebarOpen) },
@@ -158,7 +171,7 @@ export function Shell() {
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.data, projects.data, activeProject, sidebarOpen, inspectorOpen, compact, resolved, snapshot.data?.changes.length, prefs.isolateSessions]);
+  }, [sessions.data, projects.data, activeProject, sidebarOpen, inspectorOpen, compact, resolved, snapshot.data?.changes.length, prefs.isolateSessions, prefs.multiAgent, prefs.boardSessionIds.length]);
 
   const panelToggles = (
     <div className="flex items-center gap-0.5">
@@ -189,6 +202,21 @@ export function Shell() {
         return <ProvidersScreen toolbar={panelToggles} />;
       case "activity":
         return <ActivityScreen toolbar={panelToggles} project={activeProject} session={session} />;
+      case "usage":
+        return <UsageScreen toolbar={panelToggles} />;
+      case "board":
+        return prefs.boardSessionIds.length ? (
+          <MultiAgentBoard
+            sessionIds={prefs.boardSessionIds}
+            onOpenSession={(id) => selectSession(id, sessions.data?.find((s) => s.id === id)?.projectId)}
+            header={<ScreenHeader title="Multi-agent run" subtitle={`${prefs.boardSessionIds.length} agents in parallel`} toolbar={panelToggles} />}
+          />
+        ) : (
+          <>
+            <ScreenHeader title="Multi-agent run" toolbar={panelToggles} />
+            <EmptyState icon={<Columns3 />} title="No multi-agent run open" description="Turn on Multi in a new chat to run several agents on one prompt." />
+          </>
+        );
       case "code":
         return <CodeScreen toolbar={panelToggles} project={activeProject} sessions={sessions.data ?? []} snapshot={snapshot.data} />;
       case "settings":
@@ -256,6 +284,7 @@ export function Shell() {
             onOpenProviders={() => navigate("providers")}
             onOpenActivity={() => navigate("activity")}
             onOpenCode={() => navigate("code")}
+            onOpenUsage={() => navigate("usage")}
           />
         }
         main={main}

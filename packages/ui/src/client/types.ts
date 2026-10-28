@@ -12,6 +12,7 @@ import type {
   IntegrationStatus,
   Job,
   QueuedMessage,
+  UsageReport,
   VercelOverview,
 } from "@agentic-hub/types";
 import type {
@@ -65,7 +66,9 @@ export interface AgentHubClient {
   listSessions(filter?: { projectId?: string }): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<SessionSnapshot>;
   /** `isolation: "worktree"` runs the agent on a new branch in its own Git worktree. */
-  createSession(input: { projectId: string; agentId: AgentId; model?: string; prompt: string; isolation?: "none" | "worktree" }): Promise<SessionSummary>;
+  createSession(input: { projectId: string; agentId: AgentId; model?: string; prompt: string; isolation?: "none" | "worktree"; groupId?: string }): Promise<SessionSummary>;
+  /** Token usage reports, one per source (this computer, web chats, each paired computer). */
+  getUsage(options?: { days?: number }): Promise<UsageReport[]>;
   sendMessage(sessionId: string, text: string): Promise<void>;
   listQueuedMessages(sessionId: string): Promise<QueuedMessage[]>;
   removeQueuedMessage(sessionId: string, messageId: string): Promise<void>;

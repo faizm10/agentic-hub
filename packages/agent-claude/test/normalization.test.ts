@@ -16,3 +16,11 @@ it('shows the requested command without persisting the full tool input', () => {
   expect(describeClaudeApproval('Bash', { command: 'npm test', hidden: 'private file contents' })).toContain('npm test');
   expect(describeClaudeApproval('Bash', { command: 'npm test', hidden: 'private file contents' })).not.toContain('private file contents');
 });
+
+it('turns result model usage into cumulative usage events with cost', () => {
+  const events = normalizeClaudeMessage({
+    type: 'result', subtype: 'success', is_error: false,
+    modelUsage: { 'claude-opus-5-5': { inputTokens: 120, outputTokens: 40, cacheReadInputTokens: 900, cacheCreationInputTokens: 30, webSearchRequests: 0, costUSD: 0.0123, contextWindow: 200000, maxOutputTokens: 32000 } },
+  } as never);
+  expect(events).toEqual([{ type: 'usage', model: 'claude-opus-5-5', cumulative: true, inputTokens: 120, outputTokens: 40, cacheReadTokens: 900, cacheWriteTokens: 30, reasoningTokens: 0, costUsd: 0.0123 }]);
+});

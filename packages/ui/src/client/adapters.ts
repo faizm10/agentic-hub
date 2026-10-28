@@ -130,6 +130,7 @@ export function toSessionSummary(
     updatedAt: session.updatedAt,
     messageCount: extra.messageCount ?? 0,
     ...(session.worktree ? { worktree: { path: session.worktree.path, branch: session.worktree.branch } } : {}),
+    ...(session.groupId ? { groupId: session.groupId } : {}),
   };
 }
 
@@ -229,6 +230,9 @@ export function toSessionEvent(event: AgentEvent, extra: SessionEventPayload[] =
       break;
     case "file_changed":
       // The changed-file list itself comes from the diff endpoint via `extra`.
+      break;
+    case "usage":
+      payloads.push({ type: "usage", model: event.model ?? "default", inputTokens: event.inputTokens + event.cacheReadTokens + event.cacheWriteTokens, outputTokens: event.outputTokens, costUsd: event.costUsd, cumulative: event.cumulative });
       break;
     case "error":
       payloads.push({ type: "error", message: event.message });

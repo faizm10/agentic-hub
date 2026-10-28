@@ -17,6 +17,8 @@ import {
   EmptyState,
   ErrorState,
   ModelSelector,
+  MultiAgentBoard,
+  MultiAgentPicker,
   NewChatHero,
   ProjectSidebar,
   ProviderSettings,
@@ -24,6 +26,8 @@ import {
   Skeleton,
   ThemeToggle,
   Tooltip,
+  UsageDashboard,
+  cn,
   safeStorage,
   useMediaQuery,
   useShortcuts,
@@ -42,6 +46,10 @@ import {
   useModels,
   useProjects,
   useProviders,
+  useQueuedMessages,
+  useRemoveQueuedMessage,
+  useStartMultiAgent,
+  useUsage,
   useResolveApproval,
   useSendMessage,
   useSessionStream,
@@ -50,25 +58,30 @@ import {
 } from "@agentic-hub/ui/client";
 import { AGENT_DISPLAY, MODEL_CHAT_PROJECT_ID, isRunActive, type AgentId } from "@agentic-hub/ui/model";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { KeyRound, LogOut, MessageSquare, Monitor, PanelLeft, Plus, Settings } from "lucide-react";
+import { BarChart3, Columns3, GitFork, KeyRound, LogOut, MessageSquare, Monitor, PanelLeft, Plus, Settings, Users, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CLOUD_PROJECT_ID, parseDeviceRef } from "@/lib/ids";
 import { createWebClient, type WebClient } from "@/lib/web-client";
 import { DevicesScreen } from "./devices-screen";
 
-type View = "chat" | "providers" | "devices" | "settings";
+type View = "chat" | "board" | "usage" | "providers" | "devices" | "settings";
 interface Prefs {
   projectId: string;
   sessionId?: string;
   agent: AgentId;
   models: Partial<Record<AgentId, string>>;
   sidebarOpen: boolean;
+  /** Same options as the desktop composer. */
+  multiAgent?: boolean;
+  multiAgents?: AgentId[];
+  isolate?: boolean;
+  boardSessionIds?: string[];
 }
 const PREFS_KEY = "agentic-hub.web.prefs.v1";
 const DEFAULT_PREFS: Prefs = { projectId: CLOUD_PROJECT_ID, agent: "anthropic", models: {}, sidebarOpen: true };
 
-function ScreenFrame({ title, toolbar, children }: { title: string; toolbar: ReactNode; children: ReactNode }) {
+function ScreenFrame({ title, toolbar, children, wide }: { title: string; toolbar: ReactNode; children: ReactNode; wide?: boolean }) {
   return (
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-2">
@@ -76,7 +89,7 @@ function ScreenFrame({ title, toolbar, children }: { title: string; toolbar: Rea
         <h1 className="px-1 text-sm font-medium text-fg">{title}</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">{children}</div>
+        <div className={cn("mx-auto w-full px-4 py-8 sm:px-6", wide ? "max-w-5xl" : "max-w-3xl")}>{children}</div>
       </div>
     </>
   );
@@ -113,6 +126,11 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
   const cancel = useCancelRun(prefs.sessionId);
   const resolve = useResolveApproval(prefs.sessionId);
   const create = useCreateSession();
+  const startMany = useStartMultiAgent();
+  const queue = useQueuedMessages(view === "chat" ? prefs.sessionId : undefined);
+  const removeQueued = useRemoveQueuedMessage(prefs.sessionId);
+  const [usageDays, setUsageDays] = useState(30);
+  const usage = useUsage(usageDays, view === "usage");
   const setKey = useSetApiKey();
   const composerRef = useRef<ChatComposerHandle>(null);
   const [errorState, setErrorState] = useState<{ key?: string; message: string } | null>(null);
@@ -128,7 +146,7 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
     ? prefs.agent
     : (firstReady?.id ?? allowedAgents[0]?.id ?? prefs.agent);
   const agentProvider = projectProviders?.find((p) => p.agentId === composerAgent);
-  const modelsEnabled = cloud && agentProvider?.status === "ready";
+  const modelsEnabled = agentProvider?.status === "ready";
   const models = useModels(composerAgent, modelsEnabled);
 
   useEffect(() => {
@@ -157,6 +175,8 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
   const commands: PaletteCommand[] = [
     { id: "new", group: "Actions", label: "New chat", icon: <Plus />, shortcut: "mod+shift+o", run: newChat },
     { id: "providers", group: "Navigate", label: "Providers", icon: <KeyRound />, run: () => setView("providers") },
+    { id: "usage", group: "Navigate", label: "Usage and tokens", icon: <BarChart3 />, run: () => setView("usage") },
+    { id: "board", group: "Navigate", label: "Multi-agent board", icon: <Columns3 />, run: () => setView("board"), disabled: !prefs.boardSessionIds?.length },
     { id: "devices", group: "Navigate", label: "Devices", icon: <Monitor />, run: () => setView("devices") },
     { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => setView("settings") },
     ...(sessions.data ?? []).map((s) => ({
@@ -212,7 +232,10 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
       );
     }
     if (!prefs.sessionId) {
-      const blocked = !allowedAgents.length
+      const multi = Boolean(prefs.multiAgent);
+      const selected = (prefs.multiAgents ?? ["claude-code", "codex"]).filter((id) => allowedAgents.some((a) => a.id === id) && projectProviders?.find((p) => p.agentId === id)?.status === "ready");
+      const agentWork = !cloud && !deviceModelChat;
+      const blocked = multi && selected.length < 2 ? "Pick at least two ready agents to run in parallel." : multi ? (deviceId ? client.deviceControl(deviceId).reason : undefined) : !allowedAgents.length
         ? "This computer hasn't reported any agents yet."
         : agentProvider && agentProvider.status !== "ready"
           ? agentProvider.detail ?? `${AGENT_DISPLAY[composerAgent].name} isn't ready.`
@@ -237,10 +260,16 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                 />
                 <ChatComposer
                   ref={composerRef}
-                  placeholder={`Message ${AGENT_DISPLAY[composerAgent].name}…`}
+                  placeholder={multi ? `Describe a task for ${selected.length} agents to work on in parallel…` : `Message ${AGENT_DISPLAY[composerAgent].name}…`}
                   disabledReason={blocked}
                   toolbar={
                     <>
+                      <Tooltip content={multi ? "Back to one agent" : "Run several agents on the same prompt, side by side"}>
+                        <button type="button" aria-pressed={multi} onClick={() => setPrefs({ multiAgent: !multi })} className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-ring", multi ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}>
+                          <Users className="size-3.5" /> Multi
+                        </button>
+                      </Tooltip>
+                      {multi ? <MultiAgentPicker agents={allowedAgents} providers={projectProviders} value={selected} onChange={(multiAgents) => setPrefs({ multiAgents })} /> : (
                       <AgentSelector
                         agents={allowedAgents}
                         providers={projectProviders}
@@ -249,7 +278,15 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                         onManageProviders={() => setView("providers")}
                         disabled={!allowedAgents.length}
                       />
-                      {cloud ? (
+                      )}
+                      {agentWork ? (
+                        <Tooltip content={prefs.isolate ? "Runs on a new branch in its own Git worktree on your computer" : "Runs in the computer's current checkout"}>
+                          <button type="button" aria-pressed={Boolean(prefs.isolate)} onClick={() => setPrefs({ isolate: !prefs.isolate })} className={cn("inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors focus-ring", prefs.isolate ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}>
+                            <GitFork className="size-3.5" /> {prefs.isolate ? "Worktree" : "Local"}
+                          </button>
+                        </Tooltip>
+                      ) : null}
+                      {!multi ? (
                         <ModelSelector
                           models={models.data}
                           value={prefs.models[composerAgent]}
@@ -277,8 +314,20 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                   onSubmit={async (prompt) => {
                     if (!project) return;
                     setActionError(null);
+                    if (multi) {
+                      const result = await startMany.mutateAsync({ projectId: project.id, prompt, isolate: Boolean(prefs.isolate), agents: selected.map((agentId) => ({ agentId, kind: AGENT_DISPLAY[agentId].kind, model: prefs.models[agentId] })) });
+                      const failed = result.failures.map((f) => `${AGENT_DISPLAY[f.agentId].name}: ${f.message}`).join(" · ");
+                      if (!result.sessions.length) {
+                        setActionError(failed);
+                        throw new Error(failed);
+                      }
+                      if (failed) setActionError(failed);
+                      setPrefs({ boardSessionIds: result.sessions.map((s) => s.id), sessionId: undefined });
+                      setView("board");
+                      return;
+                    }
                     try {
-                      const created = await create.mutateAsync({ projectId: project.id, agentId: composerAgent, model: cloud ? prefs.models[composerAgent] : undefined, prompt });
+                      const created = await create.mutateAsync({ projectId: project.id, agentId: composerAgent, model: prefs.models[composerAgent], prompt, isolation: agentWork && prefs.isolate ? "worktree" : "none" });
                       setPrefs({ sessionId: created.id, projectId: project.id });
                     } catch (e) {
                       setActionError(errorMessage(e));
@@ -304,6 +353,17 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
     return (
       <>
         <SessionHeader session={session} project={project} onCancel={() => cancel.mutate()} cancelUnavailableReason={control.allowed ? undefined : control.reason} leading={toolbar} />
+        {(() => {
+          const group = session?.groupId ? (sessions.data ?? []).filter((s) => s.groupId === session.groupId) : [];
+          return group.length > 1 ? (
+            <div className="flex items-center gap-2 border-b border-border px-4 py-1.5 text-xs text-fg-muted">
+              <Users className="size-3.5" /> Part of a {group.length}-agent run
+              <Button size="xs" variant="ghost" onClick={() => { setPrefs({ boardSessionIds: group.map((s) => s.id) }); setView("board"); }}>
+                <Columns3 /> View side by side
+              </Button>
+            </div>
+          ) : null;
+        })()}
         <AgentEventTimeline
           items={snapshot.data?.timeline ?? []}
           agentId={session?.agentId}
@@ -313,9 +373,25 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
           onResolveApproval={control.allowed ? (approvalId, decision) => resolve.mutateAsync({ approvalId, decision }) : undefined}
           empty={<EmptyState icon={<MessageSquare />} title="No messages yet" />}
         />
+        {queue.data?.length ? (
+          <div className="mx-auto w-full max-w-[48rem] px-3 pb-2 sm:px-6" aria-label="Queued messages">
+            <div className="max-h-36 space-y-1 overflow-y-auto rounded-xl border border-border bg-surface-2 p-2">
+              <p className="px-2 text-xs font-medium text-fg-muted">Queued messages · {queue.data.length}</p>
+              {queue.data.map((message) => (
+                <div key={message.id} className="flex items-center gap-2 rounded-lg bg-surface px-2 py-1.5 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{message.text}</span>
+                  {control.allowed ? (
+                    <Button size="icon" variant="ghost" aria-label="Remove queued message" onClick={() => removeQueued.mutate(message.id)}><X className="size-3.5" /></Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <ChatComposer
           ref={composerRef}
           running={running}
+          queueWhileRunning
           onCancel={control.allowed ? () => cancel.mutate() : undefined}
           disabledReason={control.allowed ? undefined : control.reason}
           placeholder="Send a follow-up…"
@@ -392,6 +468,36 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
             </div>
           </ScreenFrame>
         );
+      case "usage":
+        return (
+          <ScreenFrame title="Usage" toolbar={toolbar} wide>
+            {usage.isPending ? <Skeleton className="h-60 rounded-xl" /> : usage.isError ? <ErrorState message={errorMessage(usage.error)} onRetry={() => void usage.refetch()} /> : (
+              <UsageDashboard reports={usage.data} days={usageDays} onDaysChange={setUsageDays} note="Web chats, plus what each paired computer last reported." />
+            )}
+          </ScreenFrame>
+        );
+      case "board":
+        return prefs.boardSessionIds?.length ? (
+          <MultiAgentBoard
+            sessionIds={prefs.boardSessionIds}
+            controlReason={(id) => client.sessionControl(id).reason}
+            onOpenSession={(id) => {
+              setView("chat");
+              setPrefs({ sessionId: id, projectId: sessions.data?.find((s) => s.id === id)?.projectId ?? prefs.projectId });
+            }}
+            header={
+              <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-2">
+                {toolbar}
+                <h1 className="px-1 text-sm font-medium text-fg">Multi-agent run</h1>
+                <span className="text-xs text-fg-subtle">{prefs.boardSessionIds.length} agents in parallel</span>
+              </header>
+            }
+          />
+        ) : (
+          <ScreenFrame title="Multi-agent run" toolbar={toolbar}>
+            <EmptyState icon={<Columns3 />} title="No multi-agent run open" description="Turn on Multi in a new chat to run several agents on one prompt." />
+          </ScreenFrame>
+        );
       default:
         return chatMain();
     }
@@ -430,6 +536,7 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
             onOpenRepository={() => setView("devices")}
             onOpenSettings={() => setView("settings")}
             onOpenProviders={() => setView("providers")}
+            onOpenUsage={() => setView("usage")}
             footer={accountMenu}
           />
         }
