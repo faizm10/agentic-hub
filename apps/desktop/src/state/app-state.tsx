@@ -1,7 +1,7 @@
 import { safeStorage, type AgentId } from "@agentic-hub/ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-export type View = "welcome" | "repositories" | "workspace" | "history" | "review" | "providers" | "activity" | "settings";
+export type View = "welcome" | "repositories" | "workspace" | "code" | "board" | "usage" | "history" | "review" | "providers" | "activity" | "settings";
 export type DataMode = "demo" | "live";
 
 export interface Preferences {
@@ -14,6 +14,15 @@ export interface Preferences {
   defaultAgent: AgentId;
   /** Last model picked per agent; unset means the provider default. */
   models: Partial<Record<AgentId, string>>;
+  /** Terminal panel under the editor. */
+  bottomPanelOpen: boolean;
+  /** New coding-agent chats run in their own Git worktree. */
+  isolateSessions: boolean;
+  /** New chats start several agents at once. */
+  multiAgent: boolean;
+  multiAgents: AgentId[];
+  /** Sessions shown side by side on the multi-agent board. */
+  boardSessionIds: string[];
 }
 
 const KEY = "agentic-hub.desktop.prefs.v2";
@@ -24,6 +33,11 @@ const DEFAULTS: Preferences = {
   inspectorOpen: true,
   defaultAgent: "claude-code",
   models: {},
+  bottomPanelOpen: true,
+  isolateSessions: false,
+  multiAgent: false,
+  multiAgents: ["claude-code", "codex"],
+  boardSessionIds: [],
 };
 
 interface AppState {
@@ -35,6 +49,11 @@ interface AppState {
   reviewPath?: string;
   openReview: (path?: string) => void;
   selectSession: (sessionId: string | undefined, projectId?: string) => void;
+  /** Opens a new chat in a project with the composer pre-filled (e.g. "work on issue #12"). */
+  composeInNewChat: (projectId: string, prompt: string) => void;
+  /** Pending composer text from `composeInNewChat`; consumed by the workspace. */
+  draftPrompt?: string;
+  consumeDraftPrompt: () => string | undefined;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -43,6 +62,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefsState] = useState<Preferences>(() => ({ ...DEFAULTS, ...safeStorage.get<Partial<Preferences>>(KEY, {}) }));
   const [view, setView] = useState<View>(() => (prefs.onboarded ? "workspace" : "welcome"));
   const [reviewPath, setReviewPath] = useState<string | undefined>();
+  const [draftPrompt, setDraftPrompt] = useState<string | undefined>();
 
   useEffect(() => safeStorage.set(KEY, prefs), [prefs]);
 
@@ -59,9 +79,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setView("review");
   }, []);
 
+  const composeInNewChat = useCallback((projectId: string, prompt: string) => {
+    setPrefsState((p) => ({ ...p, activeSessionId: undefined, activeProjectId: projectId }));
+    setDraftPrompt(prompt);
+    setView("workspace");
+  }, []);
+  const consumeDraftPrompt = useCallback(() => {
+    const text = draftPrompt;
+    if (text !== undefined) setDraftPrompt(undefined);
+    return text;
+  }, [draftPrompt]);
+
   const value = useMemo(
-    () => ({ prefs, setPrefs, view, navigate: setView, reviewPath, openReview, selectSession }),
-    [prefs, setPrefs, view, reviewPath, openReview, selectSession],
+    () => ({ prefs, setPrefs, view, navigate: setView, reviewPath, openReview, selectSession, composeInNewChat, draftPrompt, consumeDraftPrompt }),
+    [prefs, setPrefs, view, reviewPath, openReview, selectSession, composeInNewChat, draftPrompt, consumeDraftPrompt],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,7 +1,8 @@
 import { Button, DisconnectedState, EmptyState, ErrorState, Input, Kbd, MODEL_CHAT_PROJECT_ID, SectionLabel, Skeleton, formatRelative } from "@agentic-hub/ui";
-import { errorMessage, isUnavailable, useAddProject, useClient, useProjects } from "@agentic-hub/ui/client";
+import { errorMessage, isUnavailable, useAddProject, useClient, useEnvironment, useProjects } from "@agentic-hub/ui/client";
 import { FolderGit2, FolderOpen, GitBranch, LoaderCircle } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { GitHubImport } from "../components/GitHubImport";
 import { isTauri, pickRepositoryFolder } from "../platform/native";
 import { useAppState } from "../state/app-state";
 import { ScreenBody, ScreenHeader } from "./ScreenHeader";
@@ -15,6 +16,8 @@ export function RepositoryScreen({ toolbar }: { toolbar: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const native = isTauri();
   const repositories = projects.data?.filter((p) => p.id !== MODEL_CHAT_PROJECT_ID);
+  const environment = useEnvironment(client.mode === "live");
+  const gh = environment.data?.tools.find((t) => t.id === "gh");
 
   const register = async (path: string) => {
     setError(null);
@@ -77,6 +80,20 @@ export function RepositoryScreen({ toolbar }: { toolbar: ReactNode }) {
             </p>
           ) : null}
         </div>
+
+        {client.mode === "live" ? (
+          <>
+            <SectionLabel className="mb-2 mt-8">Import from GitHub</SectionLabel>
+            <GitHubImport
+              githubConnected={Boolean(gh?.authenticated)}
+              cloneDirectory={environment.data?.cloneDirectory}
+              onImported={(project) => {
+                setPrefs({ activeProjectId: project.id, activeSessionId: undefined });
+                navigate("workspace");
+              }}
+            />
+          </>
+        ) : null}
 
         <SectionLabel className="mb-2 mt-8">Recent</SectionLabel>
         {projects.isPending ? (

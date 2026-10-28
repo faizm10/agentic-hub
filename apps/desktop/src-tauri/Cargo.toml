@@ -1,6 +1,6 @@
 [package]
 name = "agentic-hub-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Agentic Hub desktop app"
 edition = "2021"
 rust-version = "1.80"
@@ -22,6 +22,7 @@ tokio = { version = "1", features = ["process", "io-util", "time", "sync", "macr
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 futures-util = "0.3"
 libc = "0.2"
+tauri-plugin-updater = "2"
 
 [profile.release]
 codegen-units = 1

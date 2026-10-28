@@ -43,6 +43,9 @@ export * from "./components/command-palette";
 export * from "./components/app-shell";
 export * from "./components/new-chat-hero";
 export * from "./components/pairing-settings";
+export * from "./components/usage-dashboard";
+export * from "./components/multi-agent-board";
+export * from "./components/multi-agent-picker";
 
 // View-model types and helpers (also available at "@agentic-hub/ui/model")
 export * from "./model";

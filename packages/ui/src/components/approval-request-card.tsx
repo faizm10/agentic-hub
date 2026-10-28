@@ -64,7 +64,7 @@ export function ApprovalRequestCard({
         {item.risk ? <Badge tone={RISK_TONE[item.risk]}>{item.risk} risk</Badge> : null}
         {!pending ? (
           <Badge tone={item.status === "approved" ? "success" : "neutral"} className="capitalize">
-            {item.status}
+            {item.autoApproved && item.status === "approved" ? "Auto-approved" : item.status}
           </Badge>
         ) : null}
       </header>
@@ -88,6 +88,9 @@ export function ApprovalRequestCard({
             </ul>
           ) : null}
           {item.reason ? <p className="text-xs text-fg-muted">{item.reason}</p> : null}
+          {item.risk === "high" && item.riskReasons?.length ? (
+            <p className="text-xs text-danger">Always asks: {item.riskReasons.join(" · ")}</p>
+          ) : null}
           {error ? (
             <p role="alert" className="text-xs text-danger">
               {error}

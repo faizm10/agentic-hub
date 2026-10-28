@@ -2,7 +2,8 @@
 //!
 //! The webview gets only the capabilities declared in `capabilities/`:
 //! window basics, the native folder picker, and the app's own `runtime_*`
-//! commands. There is no filesystem, shell or HTTP plugin. Agent execution
+//! commands, plus the signed updater. There is no filesystem, shell or HTTP
+//! plugin. Agent execution
 //! and Git access happen in the supervised runtime process, and the runtime's
 //! bearer token stays in this Rust process.
 
@@ -11,10 +12,20 @@ mod supervisor;
 
 use tauri::{Manager, RunEvent};
 
+/// Stops the runtime gracefully, then relaunches the app (used after an update is installed).
+#[tauri::command]
+async fn app_restart(app: tauri::AppHandle, bridge: tauri::State<'_, bridge::Bridge>) -> Result<(), String> {
+    bridge.supervisor.shutdown().await;
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Verifies every update against the public key in tauri.conf.json; unsigned
+        // or tampered bundles are rejected before anything is installed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let entry = app
                 .path()
@@ -34,6 +45,7 @@ pub fn run() {
             bridge::runtime_request,
             bridge::runtime_stream_open,
             bridge::runtime_stream_close,
+            app_restart,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Agentic Hub");

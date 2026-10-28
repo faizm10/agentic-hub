@@ -10,6 +10,7 @@ import { MuseAdapter } from '@agentic-hub/agent-muse';
 import { Store } from '@agentic-hub/database';
 import { ControlPlaneConnector, RUNTIME_VERSION } from './control-plane.js';
 import { CredentialStore } from './credentials.js';
+import { JobRunner } from './jobs.js';
 import { createRuntimeServer } from './server.js';
 
 const dataDir = process.env.AGENTIC_HUB_DATA_DIR ?? join(homedir(), '.agentic-hub');
@@ -65,10 +66,11 @@ registry.register(new ClaudeAdapter());
 registry.register(new MuseAdapter());
 registry.register(openai);
 registry.register(anthropic);
-const manager = new SessionManager(store, registry);
+const manager = new SessionManager(store, registry, { worktreeRoot: join(dataDir, 'worktrees') });
+const jobs = new JobRunner();
 const controlPlane = new ControlPlaneConnector(store, registry, manager);
 const server = createRuntimeServer(store, registry, manager, token, {
-  credentials, controlPlane, version: RUNTIME_VERSION,
+  credentials, controlPlane, jobs, version: RUNTIME_VERSION,
   verifyCredential: (provider, apiKey) => (provider === 'openai' ? openai : anthropic).verify(apiKey),
 });
 const port = Number(process.env.AGENTIC_HUB_PORT ?? 43117);
@@ -93,6 +95,7 @@ async function shutdown(code = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   controlPlane.stop();
+  jobs.close();
   server.close();
   server.closeAllConnections();
   await manager.close().catch(() => {});

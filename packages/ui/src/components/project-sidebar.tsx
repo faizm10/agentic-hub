@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, History, KeyRound, MessageSquareText, Search, Settings, SquarePen } from "lucide-react";
+import { Activity, BarChart3, Code2, History, KeyRound, MessageSquareText, Search, Settings, SquarePen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AGENT_DISPLAY } from "../model/agents";
 import type { ConnectionInfo, Project, ProviderConfig, SessionSummary } from "../model/types";
@@ -47,6 +47,9 @@ export interface ProjectSidebarProps {
   onOpenHistory?: () => void;
   onOpenProviders?: () => void;
   onOpenActivity?: () => void;
+  /** Files, editor and terminal (desktop). */
+  onOpenCode?: () => void;
+  onOpenUsage?: () => void;
   /** Rendered above everything (e.g. a desktop drag region spacer). */
   header?: ReactNode;
   /** Rendered at the very bottom, e.g. an account menu. */
@@ -74,6 +77,8 @@ export function ProjectSidebar({
   onOpenHistory,
   onOpenProviders,
   onOpenActivity,
+  onOpenCode,
+  onOpenUsage,
   header,
   footer,
   connectedLabel,
@@ -128,9 +133,20 @@ export function ProjectSidebar({
         )}
       </div>
       <footer className="space-y-0.5 border-t border-border p-2.5">
+        {onOpenCode ? (
+          <button type="button" onClick={onOpenCode} className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-ring">
+            <Code2 className="size-4" /> <span className="flex-1 text-left">Code</span>
+            <Kbd keys="mod+e" className="opacity-70" />
+          </button>
+        ) : null}
         {onOpenActivity ? (
           <button type="button" onClick={onOpenActivity} className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-ring">
-            <Activity className="size-4" /> Developer activity
+            <Activity className="size-4" /> GitHub &amp; Vercel
+          </button>
+        ) : null}
+        {onOpenUsage ? (
+          <button type="button" onClick={onOpenUsage} className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-ring">
+            <BarChart3 className="size-4" /> Usage
           </button>
         ) : null}
         {onOpenProviders ? (

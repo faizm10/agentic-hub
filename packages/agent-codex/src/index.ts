@@ -41,6 +41,18 @@ export function normalizeCodexItem(raw: unknown, phase: 'started' | 'completed')
   return events;
 }
 
+const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+
+/** Thread totals (`TokenUsageBreakdown`) as a cumulative usage event. Input excludes cached tokens. */
+export function codexUsage(total: RecordValue, model: string | undefined): NewAgentEvent {
+  const cached = num(total.cachedInputTokens);
+  return {
+    type: 'usage', model: model ?? 'default', cumulative: true, costUsd: null,
+    inputTokens: Math.max(0, num(total.inputTokens) - cached), outputTokens: num(total.outputTokens),
+    cacheReadTokens: cached, cacheWriteTokens: num(total.cacheWriteInputTokens), reasoningTokens: num(total.reasoningOutputTokens),
+  };
+}
+
 /** `item/agentMessage/delta` and `item/reasoning/summaryTextDelta` notifications as hub deltas. */
 export function codexDelta(method: string, params: RecordValue): NewStreamDelta | null {
   const delta = str(params.delta);
@@ -58,6 +70,8 @@ class CodexSession implements AdapterSession {
   private pending = new Map<number, { resolve(value: RecordValue): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   private approvals = new Map<string, string | number>();
   private turnId: string | null = null;
+  /** Latest thread-wide token totals from `thread/tokenUsage/updated`. */
+  private tokenTotal: RecordValue | null = null;
   private turnDone: { resolve(): void; reject(error: Error): void } | null = null;
   private closed = false;
   constructor(private readonly cwd: string, private readonly model: string | undefined) {
@@ -153,9 +167,14 @@ class CodexSession implements AdapterSession {
       this.write({ id: message.id, error: { code: -32601, message: 'Agentic Hub does not support this provider request' } });
       return;
     }
+    if (method === 'thread/tokenUsage/updated' && str(params.threadId) === this.providerSessionId) {
+      this.tokenTotal = obj(obj(params.tokenUsage).total);
+      return;
+    }
     if (method === 'turn/completed' && str(params.threadId) === this.providerSessionId) {
       const turn = obj(params.turn);
       if (this.turnId && str(turn.id) !== this.turnId) return;
+      if (this.tokenTotal) this.emit(codexUsage(this.tokenTotal, this.model));
       const done = this.turnDone;
       this.turnDone = null;
       this.turnId = null;

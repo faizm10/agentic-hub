@@ -5,3 +5,5 @@ export * from "./reconnecting-stream";
 export * from "./react";
 export * from "./adapters";
 export * from "./runtime-client";
+export * from "./workspace-stubs";
+export * from "./workspace-hooks";

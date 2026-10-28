@@ -11,9 +11,9 @@ import { hostname, platform as osPlatform } from 'node:os';
 import type { AgentRegistry, SessionManager } from '@agentic-hub/agent-core';
 import { HubError } from '@agentic-hub/agent-core';
 import type { Store } from '@agentic-hub/database';
-import { DeviceCommandSchema, type AgentEvent, type DeviceCommand, type DeviceSnapshot, type PairingStatus } from '@agentic-hub/types';
+import { DeviceCommandSchema, type AgentEvent, type DeviceCommand, type DeviceSnapshot, type ModelInfo, type PairingStatus, type ProviderInfo, type QueuedMessage, type UsageReport } from '@agentic-hub/types';
 
-export const RUNTIME_VERSION = '0.2.0';
+export const RUNTIME_VERSION = '0.3.0';
 const CONFIG = 'controlPlane:config';
 const CURSORS = 'controlPlane:cursors';
 const MAX_EVENTS_PER_SYNC = 400;
@@ -148,12 +148,34 @@ export class ControlPlaneConnector {
     return this.status();
   }
 
+  private usageCache: { at: number; value: UsageReport } | null = null;
+  private modelsCache: { at: number; value: Record<string, ModelInfo[]> } | null = null;
+
+  /** Models of ready coding agents, refreshed every few minutes (listing can start a CLI). */
+  private async agentModels(providers: ProviderInfo[]): Promise<Record<string, ModelInfo[]>> {
+    if (this.modelsCache && Date.now() - this.modelsCache.at < 5 * 60_000) return this.modelsCache.value;
+    const value: Record<string, ModelInfo[]> = {};
+    await Promise.all(providers.filter(p => p.ready && p.kind === 'agent' && p.capabilities.modelDiscovery).map(async p => {
+      try { value[p.provider] = await this.registry.listModels(p.provider); } catch { /* Shown as "default" on the web. */ }
+    }));
+    this.modelsCache = { at: Date.now(), value };
+    return value;
+  }
+
   private async snapshot(config: Config): Promise<DeviceSnapshot> {
     const sessions = this.store.sessions().slice(0, MAX_SYNCED_SESSIONS);
+    const providers = await this.registry.list();
+    if (!this.usageCache || Date.now() - this.usageCache.at > 60_000) this.usageCache = { at: Date.now(), value: this.manager.usageReport({ source: hostname(), days: 90 }) };
+    const queues: Record<string, QueuedMessage[]> = {};
+    for (const session of sessions) {
+      const queued = this.store.queuedMessages(session.id);
+      if (queued.length) queues[session.id] = queued;
+    }
     return {
       runtimeVersion: RUNTIME_VERSION, platform: devicePlatform(), allowRemoteControl: config.allowRemoteControl,
-      providers: await this.registry.list(), projects: this.store.projects(),
+      providers, projects: this.store.projects(),
       sessions: sessions.map(session => ({ ...session, title: this.store.sessionTitle(session.id) })),
+      models: await this.agentModels(providers), queues, usage: this.usageCache.value,
     };
   }
 
@@ -229,13 +251,16 @@ export class ControlPlaneConnector {
   private async run(command: DeviceCommand): Promise<Record<string, unknown>> {
     switch (command.type) {
       case 'create_session': {
-        const session = await this.manager.create(command.projectId, command.config);
+        const session = await this.manager.create(command.projectId, command.config, command.isolation ?? 'none', command.groupId);
         await this.manager.send(session.id, command.text);
         return { sessionId: session.id };
       }
       case 'send_message': await this.manager.sendOrQueue(command.sessionId, command.text); return {};
       case 'cancel': await this.manager.cancel(command.sessionId); return {};
       case 'resolve_approval': await this.manager.resolveApproval(command.approvalId, command.decision); return {};
+      case 'remove_queued':
+        if (!this.store.deleteQueuedMessage(command.sessionId, command.messageId)) throw new Error('That message is no longer queued.');
+        return {};
     }
   }
 }

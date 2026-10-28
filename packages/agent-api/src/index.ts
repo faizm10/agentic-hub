@@ -2,9 +2,14 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { AgentConfig, AgentProvider, ApprovalDecision, ModelInfo, NewAgentEvent, NewStreamDelta, ProviderInfo } from '@agentic-hub/types';
 import { credentialHint, type AdapterSession, type AgentAdapter, type CredentialSource, type StartInput } from '@agentic-hub/agent-core';
-import { anthropicReply, CAPABILITIES, DEFAULT_MODELS, DISPLAY, listAnthropicModels, listOpenAIModels, normalizeHistory, openaiReply, type ApiProvider, type ReplyStream, type Turn } from './providers.js';
+import { anthropicReply, CAPABILITIES, type TokenUsage, DEFAULT_MODELS, DISPLAY, listAnthropicModels, listOpenAIModels, normalizeHistory, openaiReply, type ApiProvider, type ReplyStream, type Turn } from './providers.js';
 
 export * from './providers.js';
+
+/** Usage of one API reply as a hub event. Input excludes cache reads, so the fields add up. */
+export function usageEvent(usage: TokenUsage): NewAgentEvent {
+  return { type: 'usage', model: usage.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens, reasoningTokens: usage.reasoningTokens, costUsd: null, cumulative: false };
+}
 
 export class ApiChatSession implements AdapterSession {
   readonly providerSessionId = null;
@@ -30,12 +35,15 @@ export class ApiChatSession implements AdapterSession {
     const reasoningStream = randomUUID();
     let reply = '';
     let reasoning = '';
+    let usage: TokenUsage | null = null;
     const flush = () => {
+      if (usage) this.events.emit('event', usageEvent(usage));
       if (reasoning.trim()) this.events.emit('event', { type: 'reasoning_summary', text: reasoning.trim() } satisfies NewAgentEvent);
       if (reply.trim()) this.events.emit('event', { type: 'message', role: 'assistant', text: reply } satisfies NewAgentEvent);
     };
     try {
       for await (const part of this.reply({ apiKey: this.apiKey, model: this.model, history: normalizeHistory(this.history), signal })) {
+        if (part.kind === 'usage') { usage = part.usage; continue; }
         if (part.kind === 'text') reply += part.delta; else reasoning += part.delta;
         this.events.emit('delta', { streamId: part.kind === 'text' ? textStream : reasoningStream, kind: part.kind, delta: part.delta } satisfies NewStreamDelta);
       }

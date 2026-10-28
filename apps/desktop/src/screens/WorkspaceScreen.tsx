@@ -7,8 +7,11 @@ import {
   EmptyState,
   ErrorState,
   ModelSelector,
+  MultiAgentPicker,
   NewChatHero,
   SessionHeader,
+  Tooltip,
+  cn,
   type ChatComposerHandle,
 } from "@agentic-hub/ui";
 import {
@@ -22,12 +25,14 @@ import {
   useProviders,
   useQueuedMessages,
   useRemoveQueuedMessage,
+  useSessions,
+  useStartMultiAgent,
   useResolveApproval,
   useSendMessage,
 } from "@agentic-hub/ui/client";
 import { AGENT_DISPLAY, MODEL_CHAT_PROJECT_ID, isRunActive, type AgentId, type Project, type SessionSnapshot } from "@agentic-hub/ui/model";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { FolderGit2, GitBranch, MessageSquare, X } from "lucide-react";
+import { Columns3, FolderGit2, GitBranch, GitFork, MessageSquare, Users, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { restartNativeRuntime, useNativeRuntimeStatus } from "../platform/runtime-status";
 import { useAppState } from "../state/app-state";
@@ -35,7 +40,7 @@ import { useAppState } from "../state/app-state";
 function ComposerFooter({ demo, project, agentId }: { demo: boolean; project?: Project; agentId: AgentId }) {
   if (demo) return <span className="text-info">Sample data. Replies are scripted, not a real agent.</span>;
   if (AGENT_DISPLAY[agentId].kind === "model") return <span>{AGENT_DISPLAY[agentId].name} answers in chat and can&rsquo;t see or change your files.</span>;
-  return project ? <span>{AGENT_DISPLAY[agentId].name} works in <span className="font-mono">{project.path}</span> and asks before risky actions.</span> : null;
+  return project ? <span>{AGENT_DISPLAY[agentId].name} works in <span className="font-mono">{project.path}</span> and always asks before risky actions.</span> : null;
 }
 
 function UnavailableMain({ toolbar, detail, onRetry }: { toolbar: ReactNode; detail: string; onRetry: () => void }) {
@@ -111,7 +116,7 @@ export function WorkspaceScreen({
   composerAgent: AgentId;
   onComposerAgentChange: (agentId: AgentId) => void;
 }) {
-  const { prefs, setPrefs, selectSession, navigate } = useAppState();
+  const { prefs, setPrefs, selectSession, navigate, draftPrompt, consumeDraftPrompt } = useAppState();
   const client = useClient();
   const demo = client.mode === "demo";
   const agents = useAgents();
@@ -123,17 +128,26 @@ export function WorkspaceScreen({
   const cancel = useCancelRun(sessionId);
   const resolve = useResolveApproval(sessionId);
   const create = useCreateSession();
+  const startMany = useStartMultiAgent();
   const composerRef = useRef<ChatComposerHandle>(null);
   // Errors belong to the chat they happened in, so switching chats clears them.
   const [errorState, setErrorState] = useState<{ sessionId?: string; message: string } | null>(null);
   const actionError = errorState && errorState.sessionId === sessionId ? errorState.message : null;
   const setActionError = (message: string | null) => setErrorState(message ? { sessionId, message } : null);
   const choice = useModelChoice(composerAgent);
+  const allSessions = useSessions();
   const modelChat = project?.id === MODEL_CHAT_PROJECT_ID;
 
   useEffect(() => {
     composerRef.current?.focus();
   }, [sessionId]);
+
+  // Prompts handed over from other screens (issues, PR reviews, failed deploys).
+  useEffect(() => {
+    if (sessionId || draftPrompt === undefined) return;
+    const text = consumeDraftPrompt();
+    if (text) composerRef.current?.setText(text);
+  }, [sessionId, draftPrompt, consumeDraftPrompt, project?.id]);
 
   if (projectsQuery.isError) {
     if (isUnavailable(projectsQuery.error)) {
@@ -144,9 +158,14 @@ export function WorkspaceScreen({
 
   // ── New chat ──────────────────────────────────────────────────────────
   if (!sessionId) {
+    const multi = prefs.multiAgent && !demo;
+    const pickable = (agents.data ?? []).filter((agent) => !modelChat || agent.kind === "model");
+    const selected = prefs.multiAgents.filter((id) => pickable.some((a) => a.id === id) && providers.data?.find((p) => p.agentId === id)?.status === "ready");
     const provider = providers.data?.find((p) => p.agentId === composerAgent);
-    const blocked = provider && provider.status !== "ready" ? (provider.detail ?? `${AGENT_DISPLAY[composerAgent].name} isn't ready yet.`) : undefined;
-    const kind = AGENT_DISPLAY[composerAgent].kind;
+    const blocked = multi
+      ? selected.length < 2 ? "Pick at least two ready agents to run in parallel." : undefined
+      : provider && provider.status !== "ready" ? (provider.detail ?? `${AGENT_DISPLAY[composerAgent].name} isn't ready yet.`) : undefined;
+    const kind = multi ? (selected.some((id) => AGENT_DISPLAY[id].kind === "agent") ? "agent" : "model") : AGENT_DISPLAY[composerAgent].kind;
     return (
       <>
         <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2 px-2">
@@ -169,10 +188,25 @@ export function WorkspaceScreen({
               />
               <ChatComposer
                 ref={composerRef}
-                placeholder={kind === "model" ? `Message ${AGENT_DISPLAY[composerAgent].name}…` : `Describe a task for ${AGENT_DISPLAY[composerAgent].name}…`}
+                placeholder={multi ? `Describe a task for ${selected.length} agents to work on in parallel…` : kind === "model" ? `Message ${AGENT_DISPLAY[composerAgent].name}…` : `Describe a task for ${AGENT_DISPLAY[composerAgent].name}…`}
                 disabledReason={blocked}
                 toolbar={
                   <>
+                    {!demo ? (
+                      <Tooltip content={multi ? "Back to one agent" : "Run several agents on the same prompt, side by side"}>
+                        <button
+                          type="button"
+                          onClick={() => setPrefs({ multiAgent: !prefs.multiAgent })}
+                          aria-pressed={multi}
+                          className={cn("inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs transition-colors focus-ring", multi ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg")}
+                        >
+                          <Users className="size-3.5" /> Multi
+                        </button>
+                      </Tooltip>
+                    ) : null}
+                    {multi ? (
+                      <MultiAgentPicker agents={pickable} providers={providers.data} value={selected} onChange={(multiAgents) => setPrefs({ multiAgents })} />
+                    ) : (
                     <AgentSelector
                       agents={modelChat ? (agents.data ?? []).filter((agent) => agent.kind === "model") : agents.data ?? []}
                       providers={providers.data}
@@ -184,7 +218,23 @@ export function WorkspaceScreen({
                       onManageProviders={() => navigate("providers")}
                       disabled={!agents.data}
                     />
-                    {choice.selector}
+                    )}
+                    {multi ? null : choice.selector}
+                    {kind === "agent" && !demo ? (
+                      <Tooltip content={prefs.isolateSessions ? "Runs on a new branch in its own Git worktree, so your checkout stays untouched" : "Runs in your current checkout"}>
+                        <button
+                          type="button"
+                          onClick={() => setPrefs({ isolateSessions: !prefs.isolateSessions })}
+                          aria-pressed={prefs.isolateSessions}
+                          className={cn(
+                            "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors focus-ring",
+                            prefs.isolateSessions ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg",
+                          )}
+                        >
+                          <GitFork className="size-3.5" /> {prefs.isolateSessions ? "Worktree" : "Local"}
+                        </button>
+                      </Tooltip>
+                    ) : null}
                   </>
                 }
                 footer={
@@ -195,13 +245,36 @@ export function WorkspaceScreen({
                       Set up {AGENT_DISPLAY[composerAgent].name} in Providers →
                     </button>
                   ) : (
-                    <ComposerFooter demo={demo} project={project} agentId={composerAgent} />
+                    multi ? <span>Each agent gets its own session{prefs.isolateSessions ? " and worktree" : ""}; results appear side by side.</span> : <ComposerFooter demo={demo} project={project} agentId={composerAgent} />
                   )
                 }
                 onSubmit={async (prompt) => {
                   setActionError(null);
+                  if (multi) {
+                    const result = await startMany.mutateAsync({
+                      projectId: project.id,
+                      prompt,
+                      isolate: prefs.isolateSessions,
+                      agents: selected.map((agentId) => ({ agentId, kind: AGENT_DISPLAY[agentId].kind, model: prefs.models[agentId] })),
+                    });
+                    if (!result.sessions.length) {
+                      const message = result.failures.map((f) => `${AGENT_DISPLAY[f.agentId].name}: ${f.message}`).join(" · ");
+                      setActionError(message);
+                      throw new Error(message);
+                    }
+                    if (result.failures.length) setActionError(result.failures.map((f) => `${AGENT_DISPLAY[f.agentId].name} didn't start: ${f.message}`).join(" · "));
+                    setPrefs({ boardSessionIds: result.sessions.map((s) => s.id), activeSessionId: undefined });
+                    navigate("board");
+                    return;
+                  }
                   try {
-                    const session = await create.mutateAsync({ projectId: project.id, agentId: composerAgent, model: choice.model, prompt });
+                    const session = await create.mutateAsync({
+                      projectId: project.id,
+                      agentId: composerAgent,
+                      model: choice.model,
+                      prompt,
+                      isolation: kind === "agent" && prefs.isolateSessions ? "worktree" : "none",
+                    });
                     selectSession(session.id, project.id);
                   } catch (e) {
                     setActionError(errorMessage(e));
@@ -243,9 +316,18 @@ export function WorkspaceScreen({
     );
   }
 
+  const group = session?.groupId ? (allSessions.data ?? []).filter((s) => s.groupId === session.groupId) : [];
   return (
     <>
       <SessionHeader session={session} project={project} onCancel={() => cancel.mutate()} leading={toolbar} />
+      {group.length > 1 ? (
+        <div className="flex items-center gap-2 border-b border-border px-4 py-1.5 text-xs text-fg-muted">
+          <Users className="size-3.5" /> Part of a {group.length}-agent run
+          <Button size="xs" variant="ghost" onClick={() => { setPrefs({ boardSessionIds: group.map((s) => s.id) }); navigate("board"); }}>
+            <Columns3 /> View side by side
+          </Button>
+        </div>
+      ) : null}
       <AgentEventTimeline
         items={snapshot?.timeline ?? []}
         agentId={session?.agentId}
@@ -270,7 +352,7 @@ export function WorkspaceScreen({
       <ChatComposer
         ref={composerRef}
         running={running}
-        queueWhileRunning={!demo}
+        queueWhileRunning
         cancelling={session?.status === "cancelling"}
         onCancel={() => cancel.mutate()}
         disabledReason={providerBlocked}

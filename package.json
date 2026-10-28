@@ -15,7 +15,9 @@
     "fe:lint": "turbo run lint --filter=@agentic-hub/ui --filter=@agentic-hub/desktop --filter=@agentic-hub/web",
     "fe:test": "turbo run test --filter=@agentic-hub/ui",
     "fe:build": "turbo run build --filter=@agentic-hub/desktop --filter=@agentic-hub/web",
-    "fe:check": "pnpm fe:typecheck && pnpm fe:lint && pnpm fe:test && pnpm fe:build"
+    "fe:check": "pnpm fe:typecheck && pnpm fe:lint && pnpm fe:test && pnpm fe:build",
+    "version:check": "node scripts/version.mjs check",
+    "version:set": "node scripts/version.mjs set"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

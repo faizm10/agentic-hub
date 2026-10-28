@@ -23,6 +23,17 @@ export function normalizeClaudeMessage(message: SDKMessage): NewAgentEvent[] {
       events.push({ type: 'tool_result', toolCallId: block.tool_use_id, toolName: 'tool', output: content, success: !block.is_error });
     }
   }
+  if (message.type === 'result' && message.modelUsage) {
+    // Running totals per model for this session (Claude Code reports cumulative usage and an estimated cost).
+    for (const [model, usage] of Object.entries(message.modelUsage)) {
+      events.push({
+        type: 'usage', model, cumulative: true,
+        inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+        cacheReadTokens: usage.cacheReadInputTokens ?? 0, cacheWriteTokens: usage.cacheCreationInputTokens ?? 0,
+        reasoningTokens: usage.thinkingTokens ?? 0, costUsd: typeof usage.costUSD === 'number' ? usage.costUSD : null,
+      });
+    }
+  }
   return events;
 }
 

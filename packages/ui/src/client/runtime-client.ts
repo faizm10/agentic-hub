@@ -108,6 +108,21 @@ export async function* readServerSentEvents(body: ReadableStream<Uint8Array>, si
   }
 }
 
+/**
+ * Strict query encoding: the native bridge only forwards a conservative
+ * character set, so characters `encodeURIComponent` leaves alone are escaped too.
+ */
+export function encodeQueryValue(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*.~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function query(params: Record<string, string | undefined>): string {
+  const parts = Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => `${k}=${encodeQueryValue(v!)}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+type Job = import("@agentic-hub/types").Job;
+
 const userMessage = (sessionId: string, text: string): AgentEvent => ({
   type: "message",
   role: "user",
@@ -309,10 +324,10 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
       };
     },
 
-    async createSession({ projectId, agentId, model, prompt }) {
+    async createSession({ projectId, agentId, model, prompt, isolation, groupId }) {
       const { session } = await request<SessionResponse>(
         "/sessions",
-        json("POST", { projectId, config: { provider: toProvider(agentId), ...(model ? { model } : {}) } }),
+        json("POST", { projectId, config: { provider: toProvider(agentId), ...(model ? { model } : {}) }, ...(isolation === "worktree" ? { isolation } : {}), ...(groupId ? { groupId } : {}) }),
       );
       const project = (await projectsById()).get(projectId);
       try {
@@ -355,6 +370,79 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
     },
     async cancelRun(sessionId) {
       await request<SessionResponse>(`/sessions/${sessionId}/cancel`, json("POST"));
+    },
+
+    async getUsage(opts) {
+      return [(await request<{ usage: import("@agentic-hub/types").UsageReport }>(`/usage?days=${opts?.days ?? 30}`)).usage];
+    },
+    async getEnvironment(opts) {
+      return (await request<{ environment: import("@agentic-hub/types").EnvironmentReport }>(`/environment${opts?.refresh ? "?refresh=1" : ""}`)).environment;
+    },
+    async getApprovalPolicy() {
+      return (await request<{ approvalPolicy: import("@agentic-hub/types").ApprovalPolicy }>("/settings")).approvalPolicy;
+    },
+    async setApprovalPolicy(approvalPolicy) {
+      return (await request<{ approvalPolicy: import("@agentic-hub/types").ApprovalPolicy }>("/settings", json("PATCH", { approvalPolicy }))).approvalPolicy;
+    },
+    async listIntegrations() {
+      return (await request<{ integrations: import("@agentic-hub/types").IntegrationStatus[] }>("/integrations")).integrations;
+    },
+    async listGitHubRepositories() {
+      return (await request<{ repositories: import("@agentic-hub/types").GitHubRepoSummary[] }>("/github/repositories")).repositories;
+    },
+    async cloneRepository(repository, directory) {
+      const { project } = await request<CreateProjectResponse>("/projects/clone", json("POST", { repository, ...(directory ? { directory } : {}) }));
+      return toProject(project as ContractProject);
+    },
+    async listFiles(projectId, path, sessionId) {
+      return (await request<{ entries: import("@agentic-hub/types").FileEntry[] }>(`/projects/${projectId}/files${query({ path, sessionId })}`)).entries;
+    },
+    async readFile(projectId, path, sessionId) {
+      return (await request<{ file: import("@agentic-hub/types").FileContent }>(`/projects/${projectId}/file${query({ path, sessionId })}`)).file;
+    },
+    async writeFile(projectId, path, content, sessionId) {
+      return (await request<{ file: import("@agentic-hub/types").FileContent }>(`/projects/${projectId}/file${query({ sessionId })}`, json("PUT", { path, content }))).file;
+    },
+    async runCommand(projectId, command, sessionId) {
+      return (await request<{ job: Job }>(`/projects/${projectId}/commands`, json("POST", { command, ...(sessionId ? { sessionId } : {}) }))).job;
+    },
+    async listJobs(projectId) {
+      return (await request<{ jobs: Job[] }>(`/jobs${query({ projectId })}`)).jobs;
+    },
+    async getJob(jobId) {
+      return (await request<{ job: Job }>(`/jobs/${jobId}`)).job;
+    },
+    async cancelJob(jobId) {
+      await request(`/jobs/${jobId}/cancel`, json("POST"));
+    },
+    streamJob(jobId, handlers) {
+      const abort = new AbortController();
+      const headers = new Headers({ accept: "text/event-stream" });
+      if (options.token) headers.set("authorization", `Bearer ${options.token}`);
+      (async () => {
+        const response = await doFetch(`${base}/jobs/${jobId}/stream`, { headers, signal: abort.signal });
+        if (!response.ok || !response.body) throw new RuntimeApiError("STREAM_FAILED", response.status, `Job output stream failed (${response.status}).`);
+        for await (const record of readServerSentEvents(response.body, abort.signal)) {
+          if (record.event === "output") handlers.onOutput(JSON.parse(record.data) as string);
+          else if (record.event === "snapshot") {
+            const job = JSON.parse(record.data) as Job;
+            if (job.output) handlers.onOutput(job.output);
+            if (job.status !== "running") return handlers.onDone(job);
+          } else if (record.event === "done") return handlers.onDone(JSON.parse(record.data) as Job);
+        }
+      })().catch((error: unknown) => {
+        if (!abort.signal.aborted) handlers.onError?.(error);
+      });
+      return () => abort.abort();
+    },
+    async getGitHubOverview(projectId, sessionId) {
+      return (await request<{ github: import("@agentic-hub/types").GitHubOverview }>(`/projects/${projectId}/github${query({ sessionId })}`)).github;
+    },
+    async getVercelOverview(projectId, sessionId) {
+      return (await request<{ vercel: import("@agentic-hub/types").VercelOverview }>(`/projects/${projectId}/vercel${query({ sessionId })}`)).vercel;
+    },
+    async runIntegrationAction(projectId, input, opts) {
+      return (await request<{ job: Job }>(`/projects/${projectId}/actions${query({ sessionId: opts?.sessionId })}`, json("POST", { input, confirm: opts?.confirm === true }))).job;
     },
     async resolveApproval(_sessionId, approvalId, decision) {
       await request(`/approvals/${approvalId}/resolve`, json("POST", { decision: toContractDecision(decision) }));

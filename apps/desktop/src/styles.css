@@ -25,3 +25,31 @@ table,
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* Sidebar update call-to-action. */
+.update-pill {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  overflow: hidden;
+  border-radius: var(--radius-md, 0.5rem);
+  border: 1px solid color-mix(in oklch, var(--color-accent) 35%, transparent);
+  background: color-mix(in oklch, var(--color-accent) 12%, transparent);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-fg);
+  transition: background-color 150ms;
+}
+.update-pill:hover {
+  background: color-mix(in oklch, var(--color-accent) 20%, transparent);
+}
+.update-pill-progress {
+  position: absolute;
+  inset: auto auto 0 0;
+  height: 2px;
+  background: var(--color-accent);
+  transition: width 300ms;
+}

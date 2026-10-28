@@ -11,7 +11,7 @@
  *
  * The browser never talks to a local runtime and never sees an API key.
  */
-import type { AgentEvent, AgentProvider, DeviceCommand, DeviceSnapshot, ModelInfo, ProviderInfo, Session } from "@agentic-hub/types";
+import type { AgentEvent, AgentProvider, DeviceCommand, DeviceSnapshot, ModelInfo, ProviderInfo, QueuedMessage, Session, UsageReport } from "@agentic-hub/types";
 import {
   RuntimeUnavailableError,
   readServerSentEvents,
@@ -25,6 +25,7 @@ import {
   toRunStatus,
   toSessionEvent,
   toSessionSummary,
+  unsupportedWorkspace,
   type AgentHubClient,
 } from "@agentic-hub/ui/client";
 import { AGENT_ORDER, MODEL_CHAT_PROJECT_ID, applySessionEvent, type SessionEvent, type StreamDeltaEvent } from "@agentic-hub/ui/model";
@@ -115,6 +116,7 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
 
   const refreshDevices = async () => {
     devices = (await request<{ devices: DeviceView[] }>("/api/devices")).devices;
+    devicesAt = Date.now();
     return devices;
   };
   const refreshKeys = async () => {
@@ -180,6 +182,24 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
   const chatLog = new Map<string, AgentEvent[]>();
   const chatDeltas = new Map<string, Map<string, { kind: "text" | "reasoning"; text: string }>>();
   const activeTurns = new Map<string, AbortController>();
+  /**
+   * Web chat messages sent while a reply is streaming. A web turn lives with
+   * this tab's request, so its queue does too; it drains when the turn ends.
+   */
+  const chatQueues = new Map<string, QueuedMessage[]>();
+  const drainChatQueue = (chatId: string) => {
+    const next = chatQueues.get(chatId)?.shift();
+    if (!next) return;
+    startTurn(chatId, next.text).catch(() => {
+      // Keep it for the user to retry or remove.
+      chatQueues.set(chatId, [next, ...(chatQueues.get(chatId) ?? [])]);
+    });
+  };
+  let devicesAt = 0;
+  const freshDevices = async () => {
+    if (Date.now() - devicesAt > 2_000) await refreshDevices();
+    return devices;
+  };
 
   const emitChatEvent = (chatId: string, event: AgentEvent) => {
     const log = chatLog.get(chatId) ?? [];
@@ -239,6 +259,7 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
         // Aborted (stop) or the connection dropped; the server keeps what it has.
       } finally {
         activeTurns.delete(chatId);
+        if (!abort.signal.aborted) drainChatQueue(chatId);
       }
     })();
   }
@@ -282,7 +303,14 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
     },
     async listModels(agentId) {
       const provider = toProvider(agentId);
-      if (!API_PROVIDERS.includes(provider)) throw new ApiError("UNSUPPORTED", 422, "Models for coding agents are chosen on the computer that runs them.");
+      if (!API_PROVIDERS.includes(provider)) {
+        // Coding-agent models as reported by the paired computers that run them.
+        await freshDevices();
+        const seen = new Map<string, ModelInfo>();
+        for (const device of devices.filter((d) => d.online)) for (const model of device.snapshot?.models?.[provider] ?? []) if (!seen.has(model.id)) seen.set(model.id, model);
+        if (!seen.size) throw new ApiError("UNSUPPORTED", 422, "Your computer hasn't reported models for this agent yet. It uses its default model.");
+        return [...seen.values()].map(toModelOption);
+      }
       return (await request<{ models: ModelInfo[] }>(`/api/providers/${provider}/models`)).models.map(toModelOption);
     },
     async setApiKey(agentId, apiKey) {
@@ -335,7 +363,7 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
       return { ...folded, session: { ...folded.session, status: toRunStatus(session.status) } };
     },
 
-    async createSession({ projectId, agentId, model, prompt }) {
+    async createSession({ projectId, agentId, model, prompt, isolation, groupId }) {
       if (projectId === CLOUD_PROJECT_ID) {
         const provider = toProvider(agentId);
         if (!API_PROVIDERS.includes(provider)) throw new ApiError("UNSUPPORTED", 422, `${DISPLAY[provider]} runs on your computer. Pick one of its projects in the sidebar.`);
@@ -344,27 +372,57 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
         return toSessionSummary({ ...session, status: "running" }, { title: prompt.split("\n")[0]!.slice(0, 120), branch: "web", messageCount: 1 });
       }
       const { device, id } = deviceFor(projectId);
-      const result = await command(device.id, { type: "create_session", projectId: id, config: { provider: toProvider(agentId), ...(model ? { model } : {}) }, text: prompt });
+      const result = await command(device.id, {
+        type: "create_session", projectId: id, config: { provider: toProvider(agentId), ...(model ? { model } : {}) }, text: prompt,
+        ...(isolation === "worktree" ? { isolation } : {}), ...(groupId ? { groupId } : {}),
+      });
       const sessionId = String(result.sessionId ?? "");
       if (!sessionId) throw new ApiError("INTERNAL_ERROR", 500, "The computer didn't return a session.");
       await refreshDevices().catch(() => {});
       const now = new Date().toISOString();
-      return { id: deviceRef(device.id, sessionId), projectId, title: prompt.split("\n")[0]!.slice(0, 120), agentId, model, status: "running", branch: "", createdAt: now, updatedAt: now, messageCount: 1 };
+      return { id: deviceRef(device.id, sessionId), projectId, title: prompt.split("\n")[0]!.slice(0, 120), agentId, model, status: "running", branch: "", createdAt: now, updatedAt: now, messageCount: 1, ...(groupId ? { groupId } : {}) };
     },
     async sendMessage(sessionId, text) {
       const ref = parseDeviceRef(sessionId);
-      if (!ref) return startTurn(sessionId, text);
+      if (!ref) {
+        if (activeTurns.has(sessionId) || chatQueues.get(sessionId)?.length) {
+          chatQueues.set(sessionId, [...(chatQueues.get(sessionId) ?? []), { id: crypto.randomUUID(), sessionId, text, createdAt: new Date().toISOString() }]);
+          if (!activeTurns.has(sessionId)) drainChatQueue(sessionId);
+          return;
+        }
+        return startTurn(sessionId, text);
+      }
       const { device, id } = deviceFor(sessionId);
+      // The computer queues it behind an active turn (sendOrQueue).
       await command(device.id, { type: "send_message", sessionId: id, text });
     },
-    listQueuedMessages: async () => [],
-    removeQueuedMessage: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Manage queued messages in the desktop app.")),
+    async listQueuedMessages(sessionId) {
+      const ref = parseDeviceRef(sessionId);
+      if (!ref) return [...(chatQueues.get(sessionId) ?? [])];
+      await freshDevices();
+      const { device, id } = deviceFor(sessionId);
+      return device.snapshot?.queues?.[id] ?? [];
+    },
+    async removeQueuedMessage(sessionId, messageId) {
+      const ref = parseDeviceRef(sessionId);
+      if (!ref) {
+        chatQueues.set(sessionId, (chatQueues.get(sessionId) ?? []).filter((m) => m.id !== messageId));
+        return;
+      }
+      const { device, id } = deviceFor(sessionId);
+      await command(device.id, { type: "remove_queued", sessionId: id, messageId });
+      await refreshDevices().catch(() => {});
+    },
+    async getUsage(opts) {
+      return (await request<{ reports: UsageReport[] }>(`/api/usage?days=${opts?.days ?? 30}`)).reports;
+    },
     getAutoApprove: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Approval settings are managed on your computer.")),
     setAutoApprove: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Approval settings are managed on your computer.")),
     getDeveloperActivity: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Developer activity is available in the desktop app.")),
     updateRepository: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Update repositories in the desktop app.")),
     getIdeUpdate: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "IDE updates are available in the desktop app.")),
     openIdeUpdate: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "IDE updates are available in the desktop app.")),
+    ...unsupportedWorkspace(() => new ApiError("UNSUPPORTED", 422, "Files, terminal and integrations run in the desktop app on your computer.")),
     async cancelRun(sessionId) {
       const ref = parseDeviceRef(sessionId);
       if (!ref) {

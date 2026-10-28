@@ -265,7 +265,7 @@ export function useCreateSession() {
   const client = useClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { projectId: string; agentId: AgentId; model?: string; prompt: string }) => client.createSession(input),
+    mutationFn: (input: { projectId: string; agentId: AgentId; model?: string; prompt: string; isolation?: "none" | "worktree" }) => client.createSession(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
 }

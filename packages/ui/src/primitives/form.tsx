@@ -1,7 +1,7 @@
 "use client";
 
 import { Switch as RadixSwitch, Tabs as RadixTabs } from "radix-ui";
-import { forwardRef, type ComponentProps, type InputHTMLAttributes } from "react";
+import { forwardRef, type ComponentProps, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { cn } from "../lib/cn";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => (
@@ -15,6 +15,18 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   />
 ));
 Input.displayName = "Input";
+
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => (
+  <textarea
+    ref={ref}
+    className={cn(
+      "w-full resize-y rounded-md border border-border bg-surface px-2.5 py-2 text-sm text-fg placeholder:text-fg-subtle transition-colors hover:border-border-strong focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50",
+      className,
+    )}
+    {...props}
+  />
+));
+Textarea.displayName = "Textarea";
 
 export function Switch({ className, ...props }: ComponentProps<typeof RadixSwitch.Root>) {
   return (

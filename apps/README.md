@@ -50,7 +50,7 @@ Every screen reads data through one interface, `AgentHubClient`
 
 ## Desktop specifics
 
-- **Capabilities** (`src-tauri/capabilities/default.json`): `core:default`, window dragging, and `dialog:allow-open`, plus the app's own `runtime_*` commands (`src-tauri/src/bridge.rs`), which only accept relative runtime API paths. There is no fs, shell or http plugin. The folder picker returns a path that is handed to the runtime via `addProject`.
+- **Capabilities** (`src-tauri/capabilities/default.json`): `core:default`, window dragging, `dialog:allow-open` and `updater:default` (signed updates; `src/platform/updater.ts`), plus the app's own `runtime_*` and `app_restart` commands (`src-tauri/src/bridge.rs`), which only accept relative runtime API paths. There is no fs, shell or http plugin. The folder picker returns a path that is handed to the runtime via `addProject`.
 - **CSP** is strict (`script-src 'self'`). The pre-paint theme script is served as `public/theme-init.js`, not inline.
 - **Layout:** resizable, collapsible sidebar and review panel (`react-resizable-panels`), with sizes persisted per window. Under 900px both become overlay drawers that don't overwrite the desktop layout.
 - **Preferences** (theme, data source, open panels, default agent, last project and session) are stored in `localStorage`, behind try/catch.
@@ -62,6 +62,7 @@ Every screen reads data through one interface, `AgentHubClient`
 | --- | --- |
 | ⌘K | Command palette (sessions, projects, actions) |
 | ⌘N / ⌘O | New chat / open repository |
+| ⌘E / ⌘\` | Code (explorer + editor) / terminal |
 | ⌘B / ⌘J | Toggle sidebar / review panel |
 | ⌘⇧D | Full-screen diff review |
 | ⌘. | Stop the active run |
@@ -80,9 +81,10 @@ light and dark, mapped into Tailwind v4 through `@theme inline`. The theme is
 `--agent-claude`, `--agent-muse`, `--agent-openai`, `--agent-anthropic`). Code blocks are highlighted with highlight.js using token-driven colours. Diffs use dedicated add/delete/hunk tokens.
 Motion is minimal and respects `prefers-reduced-motion`.
 
-The diff viewer is a custom, lightweight unified/split viewer with no Monaco
-bundle. Swap in Monaco's diff editor only if inline editing becomes a
-requirement.
+The diff viewer is a custom, lightweight unified/split viewer. The desktop
+**Code** screen uses Monaco (`apps/desktop/src/editor`), bundled locally with
+Vite worker imports because the CSP forbids CDNs, and loaded lazily so it
+doesn't slow startup.
 
 Components (all exported from `@agentic-hub/ui`): `AppShell`,
 `ProjectSidebar`, `ProjectSwitcher`, `SessionList`, `SessionHeader`,
@@ -110,7 +112,7 @@ Contract mapping, implemented in `packages/ui/src/client/adapters.ts`:
 
 Session titles and message counts are derived from the event log (the first user message), because the runtime has no title field.
 
-Not exposed by the runtime yet, and therefore not shown: approval policy, executable path, test results, risk levels on approvals, staging and discarding changes, and an activity feed across devices.
+Not exposed by the runtime yet, and therefore not shown: executable path, test results, staging and discarding individual hunks, and an activity feed across devices. Workspace methods (files, terminal jobs, integrations, approval policy) live on `AgentHubClient`; the web and demo clients reject them via `unsupportedWorkspace()`.
 
 ## Known limitations
 

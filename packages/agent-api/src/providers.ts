@@ -20,8 +20,10 @@ export const DISPLAY: Record<ApiProvider, { name: string; setupUrl: string; env:
 };
 
 export type Turn = { role: 'user' | 'assistant'; text: string };
-/** One streamed reply: yields text and reasoning deltas, returns the final text. */
-export type ReplyStream = (input: { apiKey: string; model: string; history: Turn[]; signal: AbortSignal }) => AsyncGenerator<{ kind: 'text' | 'reasoning'; delta: string }, void>;
+export interface TokenUsage { model: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number }
+export type ReplyPart = { kind: 'text' | 'reasoning'; delta: string } | { kind: 'usage'; usage: TokenUsage };
+/** One streamed reply: yields text and reasoning deltas, then the reply's token usage. */
+export type ReplyStream = (input: { apiKey: string; model: string; history: Turn[]; signal: AbortSignal }) => AsyncGenerator<ReplyPart, void>;
 
 /** Chat models reject empty turns and (Anthropic) consecutive same-role turns, so the transcript is normalised first. */
 export function normalizeHistory(history: Turn[]): Turn[] {
@@ -43,14 +45,25 @@ export const anthropicReply: ReplyStream = async function* ({ apiKey, model, his
     model, max_tokens: 16_000, system: SYSTEM_PROMPT, stream: true,
     messages: history.map(turn => ({ role: turn.role, content: turn.text })),
   }, { signal });
+  const usage: TokenUsage = { model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 };
   for await (const event of stream) {
-    if (event.type === 'content_block_delta') {
+    if (event.type === 'message_start') {
+      const u = event.message.usage;
+      usage.model = event.message.model || model;
+      usage.inputTokens = u.input_tokens ?? 0;
+      usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
+      usage.cacheWriteTokens = u.cache_creation_input_tokens ?? 0;
+      usage.outputTokens = u.output_tokens ?? 0;
+    } else if (event.type === 'content_block_delta') {
       if (event.delta.type === 'text_delta') yield { kind: 'text', delta: event.delta.text };
       else if (event.delta.type === 'thinking_delta') yield { kind: 'reasoning', delta: event.delta.thinking };
-    } else if (event.type === 'message_delta' && event.delta.stop_reason === 'refusal') {
-      throw new Error('Anthropic declined to answer this request.');
+    } else if (event.type === 'message_delta') {
+      // Output tokens here are cumulative for the message.
+      if (event.usage?.output_tokens != null) usage.outputTokens = event.usage.output_tokens;
+      if (event.delta.stop_reason === 'refusal') throw new Error('Anthropic declined to answer this request.');
     }
   }
+  yield { kind: 'usage', usage };
 };
 
 export const openaiReply: ReplyStream = async function* ({ apiKey, model, history, signal }) {
@@ -60,7 +73,16 @@ export const openaiReply: ReplyStream = async function* ({ apiKey, model, histor
     input: history.map(turn => ({ role: turn.role, content: turn.text })),
   }, { signal });
   for await (const event of stream) {
-    if (event.type === 'response.output_text.delta') yield { kind: 'text', delta: event.delta };
+    if (event.type === 'response.completed' && event.response.usage) {
+      const u = event.response.usage;
+      yield {
+        kind: 'usage',
+        usage: {
+          model: event.response.model || model, inputTokens: Math.max(0, u.input_tokens - (u.input_tokens_details?.cached_tokens ?? 0)), outputTokens: u.output_tokens,
+          cacheReadTokens: u.input_tokens_details?.cached_tokens ?? 0, cacheWriteTokens: 0, reasoningTokens: u.output_tokens_details?.reasoning_tokens ?? 0,
+        },
+      };
+    } else if (event.type === 'response.output_text.delta') yield { kind: 'text', delta: event.delta };
     else if (event.type === 'response.reasoning_summary_text.delta') yield { kind: 'reasoning', delta: event.delta };
     else if (event.type === 'response.failed') throw new Error(event.response.error?.message ?? 'OpenAI response failed');
     else if (event.type === 'error') throw new Error(event.message || 'OpenAI stream error');
