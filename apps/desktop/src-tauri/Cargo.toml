@@ -1,6 +1,6 @@
 [package]
 name = "agentic-hub-desktop"
-version = "0.3.0"
+version = "0.3.1"
 description = "Agentic Hub desktop app"
 edition = "2021"
 rust-version = "1.80"
