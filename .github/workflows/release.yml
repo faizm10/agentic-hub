@@ -1,0 +1,140 @@
+name: Release desktop app
+
+# Push a tag like v0.3.0 (matching every version file; see scripts/version.mjs),
+# or run manually from the Actions tab for an existing tag.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release (e.g. v0.3.0)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: Build, sign and publish (macOS universal)
+    runs-on: macos-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Require the updater signing key
+        # Updates are only ever published signed. Without the key, stop before building.
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set. See docs/DESKTOP_RELEASE.md."
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+      - name: Tag matches every version file
+        run: node scripts/version.mjs check "$TAG"
+      - run: pnpm check
+
+      - name: Release notes
+        # docs/releases/<tag>.md if present, otherwise the commits since the previous tag.
+        run: |
+          if [ -f "docs/releases/$TAG.md" ]; then
+            cp "docs/releases/$TAG.md" release-notes.md
+          else
+            PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+            RANGE=${PREV:+$PREV..}$TAG
+            { echo "## Changes"; echo; git log --no-merges --pretty='- %s' "$RANGE"; } > release-notes.md
+          fi
+          {
+            echo 'RELEASE_NOTES<<__NOTES__'
+            cat release-notes.md
+            echo '__NOTES__'
+          } >> "$GITHUB_ENV"
+
+      - name: Apple signing and notarization (optional)
+        # Only exported when configured, so unsigned-by-Apple builds still work.
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            {
+              echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
+              echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            } >> "$GITHUB_ENV"
+            echo "Developer ID signing enabled."
+          else
+            echo "::warning::Apple signing secrets not set; the app is ad-hoc signed and users must right-click → Open on first launch."
+          fi
+          if [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_P8" ]; then
+            KEY_PATH="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+            printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+            {
+              echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+              echo "APPLE_API_KEY=$APPLE_API_KEY"
+              echo "APPLE_API_KEY_PATH=$KEY_PATH"
+            } >> "$GITHUB_ENV"
+            echo "Notarization enabled."
+          fi
+
+      - name: Build and upload (draft)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: --target universal-apple-darwin
+          tagName: ${{ env.TAG }}
+          releaseName: Agentic Hub ${{ env.TAG }}
+          releaseBody: ${{ env.RELEASE_NOTES }}
+          releaseDraft: true
+          prerelease: ${{ contains(env.TAG, '-') }}
+          includeUpdaterJson: true
+
+      - name: Verify signed update manifest, then publish
+        # The in-app updater reads releases/latest/download/latest.json. Publish only
+        # when that manifest exists and every platform entry carries a signature.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$TAG" --pattern latest.json --dir "$RUNNER_TEMP" --clobber
+          node -e '
+            const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const want = process.argv[2].replace(/^v/, "");
+            if (m.version.replace(/^v/, "") !== want) throw new Error(`manifest version ${m.version} != ${want}`);
+            const entries = Object.entries(m.platforms ?? {});
+            if (!entries.length) throw new Error("manifest lists no platforms");
+            for (const [name, p] of entries) if (!p.signature || !p.url) throw new Error(`${name} is missing a signature or url`);
+            console.log("Signed platforms:", entries.map(([n]) => n).join(", "));
+          ' "$RUNNER_TEMP/latest.json" "$TAG"
+          gh release edit "$TAG" --draft=false

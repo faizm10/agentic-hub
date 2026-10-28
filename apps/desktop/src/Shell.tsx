@@ -26,7 +26,9 @@ import { isRunActive } from "@agentic-hub/ui/model";
 import { AGENT_DISPLAY } from "@agentic-hub/ui/model";
 import { Activity, FileDiff, FolderOpen, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { UpdatePill } from "./components/UpdateControls";
 import { platform, isTauri } from "./platform/native";
+import { startAutomaticUpdateChecks } from "./platform/updater";
 import { HistoryScreen } from "./screens/HistoryScreen";
 import { ActivityScreen } from "./screens/ActivityScreen";
 import { ProvidersScreen } from "./screens/ProvidersScreen";
@@ -71,6 +73,8 @@ export function Shell() {
   const snapshot = useSessionStream(prefs.activeSessionId);
   const session = snapshot.data?.session;
   const cancel = useCancelRun(prefs.activeSessionId);
+
+  useEffect(() => startAutomaticUpdateChecks(), []);
 
   // Keep the stored project pointer valid once data arrives.
   useEffect(() => {
@@ -213,6 +217,7 @@ export function Shell() {
         sidebar={
           <ProjectSidebar
             header={<TitlebarSpacer />}
+            footer={<UpdatePill onOpenDetails={() => navigate("settings")} />}
             projects={projects.data ?? []}
             sessions={sessions.data ?? []}
             providers={providers.data}

@@ -1,7 +1,8 @@
 import { Button, Kbd, PairingSettings, SegmentedControl, ThemeToggle, safeStorage } from "@agentic-hub/ui";
-import { errorMessage, useAutoApprove, useClient, useIdeUpdate, useOpenIdeUpdate, usePairing, usePairingActions, useSetAutoApprove } from "@agentic-hub/ui/client";
-import { Download, FlaskConical, Plug, RefreshCw } from "lucide-react";
+import { errorMessage, useAutoApprove, useClient, usePairing, usePairingActions, useSetAutoApprove } from "@agentic-hub/ui/client";
+import { FlaskConical, Plug } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { UpdatePanel, useAppVersion } from "../components/UpdateControls";
 import { isTauri } from "../platform/native";
 import { restartNativeRuntime, useNativeRuntimeStatus } from "../platform/runtime-status";
 import { useAppState, type DataMode } from "../state/app-state";
@@ -78,8 +79,7 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
   const client = useClient();
   const autoApprove = useAutoApprove(client.mode === "live");
   const setAutoApprove = useSetAutoApprove();
-  const ideUpdate = useIdeUpdate(client.mode === "live");
-  const openIdeUpdate = useOpenIdeUpdate();
+  const version = useAppVersion();
   const [layoutReset, setLayoutReset] = useState(false);
 
   return (
@@ -130,15 +130,6 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
           <p className="mb-3 text-xs text-fg-muted">Use your existing CLI sign-ins: <code className="font-mono">gh auth login</code> and <code className="font-mono">vercel login</code>. Link the repository with <code className="font-mono">vercel link</code>.</p>
           <Button size="sm" onClick={() => navigate("activity")}>Open developer activity</Button>
         </Section>
-        <Section title="IDE updates" description="Check this desktop app for releases published on GitHub.">
-          <p className="mb-3 text-sm text-fg-muted">{client.mode === "demo" ? "Switch to the local runtime to check for releases." : ideUpdate.isPending ? "Checking GitHub releases…" : ideUpdate.isError ? errorMessage(ideUpdate.error) : ideUpdate.data?.detail}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => void ideUpdate.refetch()} disabled={client.mode === "demo" || ideUpdate.isFetching}><RefreshCw className={ideUpdate.isFetching ? "animate-spin" : ""} /> Check again</Button>
-            {ideUpdate.data?.available ? <Button size="sm" variant="primary" onClick={() => void openIdeUpdate.mutate()} disabled={openIdeUpdate.isPending}><Download /> Get update</Button> : null}
-          </div>
-          {openIdeUpdate.isError ? <p className="mt-2 text-xs text-danger">{errorMessage(openIdeUpdate.error)}</p> : null}
-          {ideUpdate.data?.available ? <p className="mt-2 text-xs text-fg-muted">Opens the GitHub release page so you can download and install the update.</p> : null}
-        </Section>
         <Section title="Layout" description="Panel sizes are remembered per window.">
           <Button
             size="sm"
@@ -164,11 +155,14 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
             ))}
           </dl>
         </Section>
+        <Section title="Updates" description="Signed releases from GitHub, installed in place.">
+          <UpdatePanel />
+        </Section>
         <Section title="About">
           <dl className="space-y-1 text-sm">
             <div className="flex gap-2">
               <dt className="w-24 text-fg-subtle">Version</dt>
-              <dd className="font-mono text-xs text-fg-muted">0.2.0</dd>
+              <dd className="font-mono text-xs text-fg-muted">{version}</dd>
             </div>
             <div className="flex gap-2">
               <dt className="w-24 shrink-0 text-fg-subtle">Runtime</dt>

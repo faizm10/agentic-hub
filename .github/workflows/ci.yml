@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/version.mjs check
+      - run: pnpm check
+
+  desktop:
+    name: Desktop (Rust)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Placeholder runtime bundle and frontend
+        # cargo only needs the files tauri.conf.json references to exist.
+        run: |
+          mkdir -p apps/runtime/dist-bundle apps/desktop/dist
+          touch apps/runtime/dist-bundle/agentic-hub-runtime.mjs apps/desktop/dist/index.html
+      - run: cargo test --locked
+        working-directory: apps/desktop/src-tauri
