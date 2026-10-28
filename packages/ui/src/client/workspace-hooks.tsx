@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ApprovalPolicy, IntegrationAction, Job } from "@agentic-hub/types";
+import { buildAgentBrief, type AgentAssignment } from "../lib/multi-agent";
 import { queryKeys, useClient } from "./react";
 
 export const workspaceKeys = {
@@ -195,23 +196,33 @@ export function useUsage(days: number, enabled = true) {
 }
 
 /**
- * Starts the same prompt with several agents at once. Coding agents each get
- * their own worktree (when `isolate`) so they never edit the same checkout.
+ * Starts a multi-agent run where each agent gets its own task. Every agent's
+ * prompt also names the shared goal and what the others are doing, so they
+ * split the work. Coding agents each get their own worktree when `isolate`.
  * Sessions share a group id; failures are reported per agent.
  */
 export function useStartMultiAgent() {
   const client = useClient();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { projectId: string; prompt: string; agents: { agentId: import("../model/types").AgentId; model?: string; kind: "agent" | "model" }[]; isolate: boolean }) => {
+    mutationFn: async (input: {
+      projectId: string;
+      goal: string;
+      assignments: (AgentAssignment & { model?: string; kind: "agent" | "model" })[];
+      isolate: boolean;
+    }) => {
       const groupId = crypto.randomUUID();
       const results = await Promise.allSettled(
-        input.agents.map((a) =>
-          client.createSession({ projectId: input.projectId, agentId: a.agentId, model: a.model, prompt: input.prompt, groupId, isolation: a.kind === "agent" && input.isolate ? "worktree" : "none" }),
+        input.assignments.map((a, i) =>
+          client.createSession({
+            projectId: input.projectId, agentId: a.agentId, model: a.model, groupId,
+            prompt: buildAgentBrief(input.goal, input.assignments, i),
+            isolation: a.kind === "agent" && input.isolate ? "worktree" : "none",
+          }),
         ),
       );
       const sessions = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-      const failures = results.flatMap((r, i) => (r.status === "rejected" ? [{ agentId: input.agents[i]!.agentId, message: r.reason instanceof Error ? r.reason.message : String(r.reason) }] : []));
+      const failures = results.flatMap((r, i) => (r.status === "rejected" ? [{ agentId: input.assignments[i]!.agentId, task: input.assignments[i]!.task, message: r.reason instanceof Error ? r.reason.message : String(r.reason) }] : []));
       return { groupId, sessions, failures };
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["sessions"] }),

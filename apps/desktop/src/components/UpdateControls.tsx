@@ -45,6 +45,12 @@ export function UpdatePill({ onOpenDetails }: { onOpenDetails: () => void }) {
         <RotateCw className="size-3.5" /> Restart to update
       </button>
     );
+  if (state.status === "error" && state.version)
+    return (
+      <button type="button" onClick={onOpenDetails} className="update-pill focus-ring">
+        <CircleAlert className="size-3.5" /> Update needs attention
+      </button>
+    );
   return null;
 }
 
@@ -69,7 +75,7 @@ export function UpdatePanel() {
             : state.status === "downloading"
               ? `Downloading version ${state.version}…`
               : state.status === "ready"
-                ? `Version ${state.version} is installed. Restart to finish.`
+                ? `Version ${state.version} is installed. Restart to finish, or it will be used next time you open the app.`
                 : state.status === "error"
                   ? (
                       <span className="inline-flex items-start gap-1.5">
@@ -78,7 +84,7 @@ export function UpdatePanel() {
                     )
                   : state.checkedAt
                     ? "You're on the latest version."
-                    : "Updates are checked automatically on launch and every 6 hours."}
+                    : "Updates are downloaded and installed automatically. Restart when it suits you."}
       </p>
       {state.status === "downloading" ? (
         <div className="h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-surface-3" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent(state) ?? undefined}>

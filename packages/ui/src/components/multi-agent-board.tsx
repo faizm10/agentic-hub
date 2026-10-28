@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { errorMessage, useCancelRun, useClient, useQueuedMessages, useResolveApproval, useSessionStream } from "../client";
+import { errorMessage, useCancelRun, useQueuedMessages, useResolveApproval, useSendMessage, useSessionStream } from "../client";
 import { cn } from "../lib/cn";
 import { AGENT_DISPLAY } from "../model/agents";
 import { isRunActive } from "../model/events";
@@ -17,6 +17,8 @@ function Column({ sessionId, onOpen, controlReason }: { sessionId: string; onOpe
   const cancel = useCancelRun(sessionId);
   const resolve = useResolveApproval(sessionId);
   const queue = useQueuedMessages(sessionId);
+  const send = useSendMessage(sessionId);
+  const [sendError, setSendError] = useState<string | null>(null);
   const session = snapshot.data?.session;
   const usage = Object.values(snapshot.data?.usage ?? {}).reduce((t, u) => ({ tokens: t.tokens + u.inputTokens + u.outputTokens, cost: u.costUsd === null ? t.cost : (t.cost ?? 0) + u.costUsd }), { tokens: 0, cost: null as number | null });
   const needsInput = session?.status === "awaiting_approval";
@@ -46,6 +48,23 @@ function Column({ sessionId, onOpen, controlReason }: { sessionId: string; onOpe
       />
       {queue.data?.length ? <p className="border-t border-border px-3 py-1 text-2xs text-fg-muted">{queue.data.length} queued</p> : null}
       {snapshot.isError ? <p className="border-t border-border px-3 py-2 text-xs text-danger">{errorMessage(snapshot.error)}</p> : null}
+      <ChatComposer
+        className="px-2 pb-2 sm:px-2 sm:pb-2"
+        queueWhileRunning
+        running={session ? isRunActive(session.status) : false}
+        disabledReason={controlReason}
+        placeholder={session ? `Follow up with ${AGENT_DISPLAY[session.agentId].name}…` : "Follow up…"}
+        footer={sendError ? <span className="text-danger">{sendError}</span> : null}
+        onSubmit={async (text) => {
+          setSendError(null);
+          try {
+            await send.mutateAsync(text);
+          } catch (e) {
+            setSendError(errorMessage(e));
+            throw e;
+          }
+        }}
+      />
     </section>
   );
 }
@@ -59,14 +78,8 @@ export interface MultiAgentBoardProps {
   header?: ReactNode;
 }
 
-/**
- * Several agents side by side, each streaming live. A follow-up goes to every
- * agent at once and queues behind any turn still running.
- */
+/** Several agents side by side, each streaming live, each with its own follow-up box. */
 export function MultiAgentBoard({ sessionIds, onOpenSession, controlReason, header }: MultiAgentBoardProps) {
-  const client = useClient();
-  const [error, setError] = useState<string | null>(null);
-  const writable = sessionIds.filter((id) => !controlReason?.(id));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {header}
@@ -75,18 +88,6 @@ export function MultiAgentBoard({ sessionIds, onOpenSession, controlReason, head
           <Column key={id} sessionId={id} onOpen={onOpenSession} controlReason={controlReason?.(id)} />
         ))}
       </div>
-      <ChatComposer
-        queueWhileRunning
-        placeholder={`Send a follow-up to all ${writable.length} agents…`}
-        disabledReason={writable.length ? undefined : controlReason?.(sessionIds[0] ?? "")}
-        footer={error ? <span className="text-danger">{error}</span> : <span>Each agent gets the message; busy agents queue it.</span>}
-        onSubmit={async (text) => {
-          setError(null);
-          const results = await Promise.allSettled(writable.map((id) => client.sendMessage(id, text)));
-          const failed = results.filter((r) => r.status === "rejected").length;
-          if (failed) setError(`${failed} of ${writable.length} agents didn't get the message.`);
-        }}
-      />
     </div>
   );
 }

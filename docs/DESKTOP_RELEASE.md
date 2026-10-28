@@ -2,8 +2,8 @@
 
 ## How updates work
 
-- The app checks `https://github.com/faizm10/agentic-hub/releases/latest/download/latest.json` 8 seconds after launch and every 6 hours (Tauri updater plugin). Users can also press **Settings → Updates → Check for updates**.
-- When a newer version exists, the sidebar shows **Update available**. Clicking it downloads the bundle with a progress bar, then offers **Restart to update**, which stops the local runtime cleanly and relaunches.
+- The app checks `https://github.com/faizm10/agentic-hub/releases/latest/download/latest.json` 8 seconds after launch, every hour, and when the window regains focus after at least 15 minutes (Tauri updater plugin). Users can also press **Settings → Updates → Check for updates**.
+- When a newer version exists, the app downloads and installs it in the background. The sidebar shows progress and then **Restart to update**. Restarting stops the local runtime cleanly and relaunches; closing and reopening the app also starts the installed version. A failed install is shown in the sidebar with details and a retry button in Settings.
 - Every update bundle is signed with the updater key (minisign). The app verifies it against the public key compiled into `tauri.conf.json → plugins.updater.pubkey` and refuses anything unsigned or tampered with. Errors (offline, bad signature, read-only install location) are shown with what to do next.
 - Release notes come from `docs/releases/<tag>.md` if it exists, otherwise from the commit list since the previous tag.
 
