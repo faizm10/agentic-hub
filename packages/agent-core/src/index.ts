@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { MODEL_CHAT_PROJECT_ID } from '@agentic-hub/types';
+import { join } from 'node:path';
+import { ApprovalPolicySchema, DEFAULT_APPROVAL_POLICY, MODEL_CHAT_PROJECT_ID } from '@agentic-hub/types';
+import type { ApprovalPolicy, Project, Worktree } from '@agentic-hub/types';
+import { createWorktree } from '@agentic-hub/git';
+import { assessApproval, shouldAutoApprove } from './approval-policy.js';
 import type { AgentConfig, AgentEvent, AgentProvider, ApprovalDecision, ModelInfo, NewAgentEvent, NewStreamDelta, AgentCapabilities, ProviderInfo, Session, StreamDelta, Task, TaskRun } from '@agentic-hub/types';
 import { Store, redactStoredText } from '@agentic-hub/database';
 
@@ -54,6 +58,8 @@ export function providerErrorMessage(error: unknown, provider: string): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, '[REDACTED]').slice(0, 500) || `${provider} request failed`;
 }
+
+export * from './approval-policy.js';
 
 export class HubError extends Error {
   constructor(readonly code: string, readonly status: number, message: string) { super(message); }
@@ -112,7 +118,10 @@ export class SessionManager {
   private draining = new Set<string>();
   private closing = false;
   private bus = new EventEmitter();
-  constructor(readonly store: Store, readonly registry: AgentRegistry) { this.bus.setMaxListeners(0); }
+  /** `worktreeRoot`: where isolated session worktrees are created. */
+  constructor(readonly store: Store, readonly registry: AgentRegistry, private readonly options: { worktreeRoot?: string } = {}) { this.bus.setMaxListeners(0); }
+  /** The directory a session's agent works in: its worktree, or the project checkout. */
+  cwdOf(session: Session, project: Project): string { return session.worktree?.path ?? project.path; }
   subscribe(sessionId: string, listener: SessionListener): () => void {
     this.bus.on(sessionId, listener);
     return () => this.bus.off(sessionId, listener);
@@ -128,8 +137,24 @@ export class SessionManager {
     return () => this.bus.off('*', listener);
   }
   isActive(sessionId: string): boolean { return this.active.has(sessionId) || this.starting.has(sessionId); }
-  autoApprove(): boolean { return this.store.secret('settings:autoApprove') === 'true'; }
-  setAutoApprove(enabled: boolean): boolean { this.store.setSecret('settings:autoApprove', String(enabled)); return enabled; }
+  approvalPolicy(): ApprovalPolicy {
+    const raw = this.store.secret('settings:approvalPolicy');
+    if (raw) {
+      try { return ApprovalPolicySchema.parse(JSON.parse(raw)); } catch { /* Fall through to defaults. */ }
+    }
+    // Earlier versions had one "approve everything" switch. It now maps to the
+    // trusted policy, which still asks for anything that isn't low risk.
+    if (this.store.secret('settings:autoApprove') === 'true') return { mode: 'trusted', autoApproveFileEdits: true, trustedCommands: [] };
+    return DEFAULT_APPROVAL_POLICY;
+  }
+  setApprovalPolicy(policy: ApprovalPolicy): ApprovalPolicy {
+    const next = ApprovalPolicySchema.parse(policy);
+    this.store.setSecret('settings:approvalPolicy', JSON.stringify(next));
+    return next;
+  }
+  /** Compatibility view of the policy for older clients. */
+  autoApprove(): boolean { return this.approvalPolicy().mode === 'trusted'; }
+  setAutoApprove(enabled: boolean): boolean { this.setApprovalPolicy({ ...this.approvalPolicy(), mode: enabled ? 'trusted' : 'ask' }); return enabled; }
   async sendOrQueue(sessionId: string, text: string) {
     const session = this.store.session(sessionId);
     if (!session) throw new HubError('NOT_FOUND', 404, 'Session not found');
@@ -162,7 +187,7 @@ export class SessionManager {
     if (started && !this.isActive(sessionId)) void this.drainQueue(sessionId);
   }
   resumeQueues(): void { for (const sessionId of this.store.queuedSessions()) void this.drainQueue(sessionId); }
-  async create(projectId: string, config: AgentConfig): Promise<Session> {
+  async create(projectId: string, config: AgentConfig, isolation: 'none' | 'worktree' = 'none'): Promise<Session> {
     const project = this.store.project(projectId);
     if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
     const adapter = this.registry.get(config.provider);
@@ -170,7 +195,14 @@ export class SessionManager {
     const info = await this.registry.readiness(config.provider);
     if (!info.ready || !adapter.capabilities.execution) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
     const now = new Date().toISOString();
-    const session: Session = { id: randomUUID(), projectId, config, status: 'idle', providerSessionId: null, createdAt: now, updatedAt: now };
+    const id = randomUUID();
+    let worktree: Worktree | null = null;
+    if (isolation === 'worktree') {
+      if (projectId === MODEL_CHAT_PROJECT_ID || !this.options.worktreeRoot) throw new HubError('UNSUPPORTED_ACTION', 422, 'Worktrees are available for coding agents in a repository');
+      try { worktree = await createWorktree(project.path, join(this.options.worktreeRoot, id), `agentic/${config.provider}-${id.slice(0, 8)}`); }
+      catch (error) { throw new HubError('CONFLICT', 409, `Could not create a worktree: ${error instanceof Error ? error.message.split('\n')[0] : 'git failed'}`); }
+    }
+    const session: Session = { id, projectId, config, status: 'idle', providerSessionId: null, worktree, createdAt: now, updatedAt: now };
     this.store.saveSession(session);
     return session;
   }
@@ -187,7 +219,7 @@ export class SessionManager {
       if (!info.ready) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
       let instance: AdapterSession;
       try {
-        instance = await adapter.start({ cwd: project.path, config: session.config, providerSessionId: session.providerSessionId, history: this.store.transcript(sessionId) });
+        instance = await adapter.start({ cwd: this.cwdOf(session, project), config: session.config, providerSessionId: session.providerSessionId, history: this.store.transcript(sessionId) });
       } catch (error) {
         if (error instanceof HubError) throw error;
         throw new HubError('PROVIDER_UNAVAILABLE', 503, providerErrorMessage(error, info.displayName));
@@ -227,15 +259,21 @@ export class SessionManager {
   private accept(sessionId: string, active: Active, event: NewAgentEvent): void {
     if (active.finished || this.active.get(sessionId) !== active) return;
     if (event.type === 'completed') return;
+    let autoApprove = false;
     if (event.type === 'approval_requested') {
-      event = { ...event, approval: { ...event.approval, sessionId, taskRunId: active.runId } };
+      const session = this.store.session(sessionId);
+      const project = session && this.store.project(session.projectId);
+      const policy = this.approvalPolicy();
+      const assessment = assessApproval(event.approval.toolName, event.approval.description, { trustedCommands: policy.trustedCommands, ...(session && project ? { cwd: this.cwdOf(session, project) } : {}) });
+      autoApprove = shouldAutoApprove(policy, event.approval.toolName, assessment);
+      event = { ...event, approval: { ...event.approval, sessionId, taskRunId: active.runId, risk: assessment.risk, riskReasons: assessment.reasons, ...(autoApprove ? { autoApproved: true } : {}) } };
       this.store.saveApproval(event.approval);
       this.setStatus(sessionId, 'awaiting_approval', active.adapter.providerSessionId);
       const run = this.store.run(active.runId)!;
       this.store.saveRun({ ...run, status: 'awaiting_approval' });
     }
     this.append(sessionId, active.runId, event);
-    if (event.type === 'approval_requested' && this.autoApprove()) {
+    if (event.type === 'approval_requested' && autoApprove) {
       const approvalId = event.approval.id;
       queueMicrotask(() => { void this.resolveApproval(approvalId, 'approve').catch(() => {}); });
     }

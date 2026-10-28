@@ -56,16 +56,40 @@ describe('session lifecycle', () => {
     store.close();
   });
 
-  it('automatically resolves approvals only when enabled', async () => {
+  it('auto-approves only low-risk requests under the trusted policy', async () => {
     const { store, adapter, manager, session } = await setup();
     expect(manager.autoApprove()).toBe(false);
     manager.setAutoApprove(true);
+    expect(manager.approvalPolicy().mode).toBe('trusted');
     await manager.send(session.id, 'work');
-    const approvalId = randomUUID();
-    adapter.instance.emit({ type: 'approval_requested', approval: { id: approvalId, sessionId: '', taskRunId: '', toolName: 'shell', description: 'run tests', status: 'pending', createdAt: new Date().toISOString(), resolvedAt: null } });
+    const request = (id: string, description: string) => adapter.instance.emit({ type: 'approval_requested', approval: { id, sessionId: '', taskRunId: '', toolName: 'shell', description, status: 'pending', createdAt: new Date().toISOString(), resolvedAt: null } });
+    const safe = randomUUID();
+    request(safe, 'Run tests — pnpm test');
     await new Promise(resolve => setImmediate(resolve));
-    expect(store.approval(approvalId)?.status).toBe('approved');
+    expect(store.approval(safe)).toMatchObject({ status: 'approved', risk: 'low', autoApproved: true });
     expect(store.session(session.id)?.status).toBe('running');
+    const risky = randomUUID();
+    request(risky, 'Push — git push --force origin main');
+    await new Promise(resolve => setImmediate(resolve));
+    expect(store.approval(risky)).toMatchObject({ status: 'pending', risk: 'high' });
+    const unknown = randomUUID();
+    request(unknown, 'Install — npm install left-pad');
+    await new Promise(resolve => setImmediate(resolve));
+    expect(store.approval(unknown)).toMatchObject({ status: 'pending', risk: 'medium' });
+    await manager.cancel(session.id);
+    store.close();
+  });
+
+  it('never auto-approves in ask mode, and migrates the legacy switch', async () => {
+    const { store, adapter, manager, session } = await setup();
+    store.setSecret('settings:autoApprove', 'true');
+    expect(manager.approvalPolicy()).toEqual({ mode: 'trusted', autoApproveFileEdits: true, trustedCommands: [] });
+    manager.setApprovalPolicy({ mode: 'ask', autoApproveFileEdits: true, trustedCommands: [] });
+    await manager.send(session.id, 'work');
+    const id = randomUUID();
+    adapter.instance.emit({ type: 'approval_requested', approval: { id, sessionId: '', taskRunId: '', toolName: 'shell', description: 'Run — ls', status: 'pending', createdAt: new Date().toISOString(), resolvedAt: null } });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(store.approval(id)).toMatchObject({ status: 'pending', risk: 'low' });
     await manager.cancel(session.id);
     store.close();
   });

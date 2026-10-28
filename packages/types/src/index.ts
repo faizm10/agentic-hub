@@ -61,12 +61,17 @@ export const MODEL_CHAT_PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 
 export const SessionStatusSchema = z.enum(['idle', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled', 'interrupted']);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
+/** An isolated Git worktree a session runs in instead of the main checkout. */
+export const WorktreeSchema = z.object({ path: z.string().min(1), branch: z.string().min(1), baseRef: z.string().nullable() });
+export type Worktree = z.infer<typeof WorktreeSchema>;
+
 export const SessionSchema = z.object({
   id: IdSchema,
   projectId: IdSchema,
   config: AgentConfigSchema,
   status: SessionStatusSchema,
   providerSessionId: z.string().nullable(),
+  worktree: WorktreeSchema.nullable().optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -80,6 +85,107 @@ export interface DeveloperActivity {
   vercel: { connected: boolean; detail: string; deployments: { id: string; url: string; state: string; target: string; createdAt: string }[] };
   update: { available: boolean; behind: number; ahead: number; branch: string; blockedReason?: string };
 }
+
+/**
+ * How coding-agent approval requests are answered.
+ * - `ask`: every request waits for the user.
+ * - `trusted`: low-risk requests (read-only tools, trusted command prefixes and,
+ *   if enabled, file edits inside the workspace) are approved automatically.
+ *   Medium and high risk requests always wait; high risk includes destructive
+ *   commands, pushes, deploys, permission changes and secrets.
+ */
+export const ApprovalPolicySchema = z.object({
+  mode: z.enum(['ask', 'trusted']),
+  autoApproveFileEdits: z.boolean(),
+  trustedCommands: z.array(z.string().trim().min(1).max(200)).max(100),
+});
+export type ApprovalPolicy = z.infer<typeof ApprovalPolicySchema>;
+export const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = { mode: 'ask', autoApproveFileEdits: false, trustedCommands: [] };
+
+/** A developer tool the onboarding wizard checks for. */
+export interface ToolCheck {
+  id: 'git' | 'node' | 'gh' | 'vercel' | 'codex' | 'claude' | 'muse';
+  name: string;
+  required: boolean;
+  installed: boolean;
+  version: string | null;
+  /** Signed in, for tools that have accounts. `null` when not applicable. */
+  authenticated: boolean | null;
+  account: string | null;
+  detail: string;
+  installCommand: string | null;
+  authCommand: string | null;
+  docsUrl: string;
+}
+export interface EnvironmentReport { tools: ToolCheck[]; cloneDirectory: string; platform: string }
+
+export interface IntegrationStatus {
+  id: 'github' | 'vercel';
+  name: string;
+  installed: boolean;
+  authenticated: boolean;
+  account: string | null;
+  detail: string;
+  connectCommand: string;
+  docsUrl: string;
+}
+
+export interface GitHubRepoSummary { nameWithOwner: string; description: string | null; isPrivate: boolean; updatedAt: string; url: string }
+export interface GitHubIssue { number: number; title: string; state: string; url: string; author: string; labels: string[]; updatedAt: string }
+export interface GitHubPullRequest {
+  number: number; title: string; state: string; url: string; author: string; headRefName: string; baseRefName: string;
+  isDraft: boolean; reviewDecision: string | null; checks: 'passing' | 'failing' | 'pending' | 'none'; updatedAt: string;
+}
+export interface GitBranch { name: string; current: boolean; upstream: string | null; lastCommit: string }
+export interface GitCommit { sha: string; title: string; author: string; date: string }
+export interface GitHubOverview {
+  status: IntegrationStatus;
+  repository: { nameWithOwner: string; url: string; defaultBranch: string | null } | null;
+  branches: GitBranch[];
+  commits: GitCommit[];
+  pullRequests: GitHubPullRequest[];
+  issues: GitHubIssue[];
+}
+export interface VercelDeployment { id: string; url: string; state: string; target: string; createdAt: string; branch: string | null; commit: string | null; inspectorUrl: string | null }
+export interface VercelOverview { status: IntegrationStatus; project: { id: string; name: string | null; orgId: string } | null; deployments: VercelDeployment[] }
+
+/** Integration actions the runtime can run. `confirm` must be true for sensitive ones. */
+export const IntegrationActionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('github.pr.create'), title: z.string().trim().min(1).max(256), body: z.string().max(20_000).optional(), base: z.string().trim().min(1).max(200).optional(), draft: z.boolean().optional() }),
+  z.object({ action: z.literal('github.pr.review'), number: z.number().int().positive(), event: z.enum(['approve', 'comment', 'request-changes']), body: z.string().max(20_000).optional() }),
+  z.object({ action: z.literal('github.pr.merge'), number: z.number().int().positive(), method: z.enum(['merge', 'squash', 'rebase']) }),
+  z.object({ action: z.literal('github.issue.create'), title: z.string().trim().min(1).max(256), body: z.string().max(20_000).optional() }),
+  z.object({ action: z.literal('git.commit'), message: z.string().trim().min(1).max(5_000) }),
+  z.object({ action: z.literal('git.push') }),
+  z.object({ action: z.literal('vercel.deploy'), target: z.enum(['preview', 'production']) }),
+  z.object({ action: z.literal('vercel.logs'), deploymentId: z.string().regex(/^[\w.:-]{3,200}$/) }),
+]);
+export type IntegrationAction = z.infer<typeof IntegrationActionSchema>;
+export const RunIntegrationActionRequestSchema = z.object({ input: IntegrationActionSchema, confirm: z.boolean().optional() });
+
+/** A process the runtime ran for the user: a terminal command or an integration action. */
+export interface Job {
+  id: string;
+  projectId: string;
+  kind: 'terminal' | 'integration';
+  title: string;
+  command: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  exitCode: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  /** Combined stdout/stderr, capped. */
+  output: string;
+  risk: ApprovalRisk;
+  /** Link produced by the job, e.g. a pull request or deployment. */
+  resultUrl: string | null;
+}
+export const RunCommandRequestSchema = z.object({ command: z.string().trim().min(1).max(4_000), sessionId: IdSchema.optional() });
+
+export interface FileEntry { name: string; path: string; type: 'file' | 'directory'; size: number | null; changed?: boolean }
+export interface FileContent { path: string; content: string; size: number; binary: boolean; truncated: boolean; language: string }
+export const WriteFileRequestSchema = z.object({ path: z.string().min(1).max(1_000), content: z.string().max(5_000_000) });
+export const CloneRepositoryRequestSchema = z.object({ repository: z.string().trim().min(3).max(300), directory: z.string().trim().min(1).max(1_000).optional() });
 
 export interface IdeUpdateInfo { currentVersion: string; latestVersion: string | null; available: boolean; releaseUrl: string | null; detail: string }
 
@@ -105,12 +211,19 @@ export type TaskRun = z.infer<typeof TaskRunSchema>;
 
 export const ApprovalDecisionSchema = z.enum(['approve', 'deny']);
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>;
+export const ApprovalRiskSchema = z.enum(['low', 'medium', 'high']);
+export type ApprovalRisk = z.infer<typeof ApprovalRiskSchema>;
 export const ApprovalRequestSchema = z.object({
   id: IdSchema,
   sessionId: IdSchema,
   taskRunId: IdSchema,
   toolName: z.string(),
   description: z.string(),
+  /** Set by the runtime's approval policy. High risk is never auto-approved. */
+  risk: ApprovalRiskSchema.optional(),
+  riskReasons: z.array(z.string()).optional(),
+  /** True when the policy approved it without asking. */
+  autoApproved: z.boolean().optional(),
   status: z.enum(['pending', 'approved', 'denied']),
   createdAt: TimestampSchema,
   resolvedAt: TimestampSchema.nullable(),
@@ -177,7 +290,12 @@ export const CreateProjectResponseSchema = z.object({ project: ProjectSchema });
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
 export const GetSessionsResponseSchema = z.object({ sessions: z.array(SessionSchema) });
 export type GetSessionsResponse = z.infer<typeof GetSessionsResponseSchema>;
-export const CreateSessionRequestSchema = z.object({ projectId: IdSchema, config: AgentConfigSchema });
+export const CreateSessionRequestSchema = z.object({
+  projectId: IdSchema,
+  config: AgentConfigSchema,
+  /** `worktree` runs the session on a new branch in its own Git worktree. */
+  isolation: z.enum(['none', 'worktree']).optional(),
+});
 export type CreateSessionRequest = z.infer<typeof CreateSessionRequestSchema>;
 export const SessionResponseSchema = z.object({ session: SessionSchema });
 export type SessionResponse = z.infer<typeof SessionResponseSchema>;
