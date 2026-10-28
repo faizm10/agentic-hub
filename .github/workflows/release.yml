@@ -1,9 +1,13 @@
 name: Release desktop app
 
-# Push a tag like v0.3.0 (matching every version file; see scripts/version.mjs),
-# or run manually from the Actions tab for an existing tag.
+# Releases happen when:
+# - main gets a version (scripts/version.mjs) that has no release yet, e.g. by merging a PR
+#   that bumped it. The tag is created at that commit;
+# - a tag like v0.3.0 is pushed; or
+# - it is run manually from the Actions tab for an existing tag.
 on:
   push:
+    branches: [main]
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
@@ -19,15 +23,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Decide what to release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then TAG="$INPUT_TAG"; REF="$INPUT_TAG"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then TAG="$GITHUB_REF_NAME"; REF="$GITHUB_REF_NAME"
+          else TAG="v$(node scripts/version.mjs)"; REF="$GITHUB_SHA"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          # A published release for this version means there is nothing new to ship.
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"; echo "$TAG is already released."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"; echo "Releasing $TAG from $REF."
+          fi
+
   macos:
     name: Build, sign and publish (macOS universal)
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     runs-on: macos-latest
     env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.plan.outputs.ref }}
           fetch-depth: 0
 
       - name: Require the updater signing key
@@ -63,8 +95,8 @@ jobs:
           if [ -f "docs/releases/$TAG.md" ]; then
             cp "docs/releases/$TAG.md" release-notes.md
           else
-            PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
-            RANGE=${PREV:+$PREV..}$TAG
+            PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+            RANGE=${PREV:+$PREV..}HEAD
             { echo "## Changes"; echo; git log --no-merges --pretty='- %s' "$RANGE"; } > release-notes.md
           fi
           {
@@ -115,6 +147,7 @@ jobs:
           tauriScript: pnpm tauri
           args: --target universal-apple-darwin
           tagName: ${{ env.TAG }}
+          releaseCommitish: ${{ github.sha }}
           releaseName: Agentic Hub ${{ env.TAG }}
           releaseBody: ${{ env.RELEASE_NOTES }}
           releaseDraft: true

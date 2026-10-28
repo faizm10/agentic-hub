@@ -32,13 +32,14 @@ Without the Apple secrets, releases still update in place with verified signatur
 
 ## Cutting a release
 
+Bump the version in a PR and merge it:
+
 ```sh
 node scripts/version.mjs set 0.4.0        # writes every version file (semver)
-git commit -am "Release 0.4.0"
-git tag v0.4.0 && git push origin main v0.4.0
+git commit -am "Release 0.4.0"            # then open a PR and merge it into main
 ```
 
-`.github/workflows/release.yml` then: checks the tag matches every version file, runs `pnpm check`, builds a universal macOS app, signs the updater bundle, uploads it with `latest.json` to a **draft** release, verifies the manifest's version and per-platform signatures, and only then publishes the release. A failed step leaves at most a draft, so users are never offered a broken or unsigned update. Pre-release tags (`v0.4.0-beta.1`) are marked as pre-releases.
+When `main` reaches a version that has no published release, `.github/workflows/release.yml` releases it and creates the `v0.4.0` tag at that commit. Pushing a tag yourself (`git tag v0.4.0 && git push origin v0.4.0`) or running the workflow manually also works. The workflow: checks the tag matches every version file, runs `pnpm check`, builds a universal macOS app, signs the updater bundle, uploads it with `latest.json` to a **draft** release, verifies the manifest's version and per-platform signatures, and only then publishes the release. A failed step leaves at most a draft, so users are never offered a broken or unsigned update. Pre-release tags (`v0.4.0-beta.1`) are marked as pre-releases.
 
 `node scripts/version.mjs check` runs in CI and fails if any version file disagrees.
 
