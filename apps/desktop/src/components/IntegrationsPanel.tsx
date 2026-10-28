@@ -1,4 +1,4 @@
-import { Badge, Button, EmptyState, ErrorState, Input, MODEL_CHAT_PROJECT_ID, Skeleton, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, cn, formatRelative, useCopy } from "@agentic-hub/ui";
+import { Badge, Button, EmptyState, ErrorState, Input, MODEL_CHAT_PROJECT_ID, Skeleton, Switch, Tabs, TabsContent, TabsList, TabsTrigger, Textarea, Tooltip, cn, formatRelative, useCopy } from "@agentic-hub/ui";
 import {
   errorMessage,
   useCancelJob,
@@ -11,19 +11,18 @@ import {
   useVercelOverview,
 } from "@agentic-hub/ui/client";
 import type { ApprovalRisk, GitHubPullRequest, IntegrationAction, IntegrationStatus, Job, Project, SessionSummary, VercelDeployment } from "@agentic-hub/ui/model";
-import { Check, Copy, ExternalLink, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, Network as Github, ListChecks, MessageSquarePlus, RefreshCw, Rocket, ScrollText, Sparkles, Upload } from "lucide-react";
+import { Check, Copy, ExternalLink, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, Network as Github, ListChecks, MessageSquarePlus, RefreshCw, Rocket, ScrollText, Sparkles, Upload, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { JobOutput, JobStatusBadge } from "../components/JobOutput";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { JobOutput, JobStatusBadge } from "./JobOutput";
 import { useAppState } from "../state/app-state";
-import { ScreenBody, ScreenHeader } from "./ScreenHeader";
 
 type Pending = { title: string; description: ReactNode; risk: ApprovalRisk; confirmLabel: string; input: IntegrationAction; body?: ReactNode };
 
 function Card({ title, icon, actions, children, className }: { title: ReactNode; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("overflow-hidden rounded-xl border border-border bg-surface", className)}>
-      <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+    <section className={cn("overflow-hidden rounded-xl border border-border bg-bg", className)}>
+      <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
         <h2 className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold [&_svg]:size-4">
           {icon}
           {title}
@@ -37,8 +36,8 @@ function Card({ title, icon, actions, children, className }: { title: ReactNode;
 
 function Row({ href, title, detail, trailing, actions }: { href?: string; title: ReactNode; detail?: ReactNode; trailing?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-0">
-      <div className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-2.5 last:border-0">
+      <div className="min-w-0 flex-1 basis-48">
         <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-fg">
           {href ? (
             <a href={href} target="_blank" rel="noreferrer" className="truncate hover:underline focus-ring">
@@ -51,7 +50,7 @@ function Row({ href, title, detail, trailing, actions }: { href?: string; title:
         {detail ? <div className="truncate text-xs text-fg-muted">{detail}</div> : null}
       </div>
       {trailing}
-      {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+      {actions ? <div className="flex shrink-0 flex-wrap items-center gap-1">{actions}</div> : null}
     </div>
   );
 }
@@ -61,7 +60,7 @@ function ConnectPrompt({ status, onRecheck, checking }: { status: IntegrationSta
   const { copied, copy } = useCopy();
   const command = status.installed ? status.connectCommand : status.id === "github" ? "brew install gh && gh auth login --web" : "npm install -g vercel && vercel login";
   return (
-    <div className="space-y-3 px-4 py-4">
+    <div className="space-y-3 px-3 py-4">
       <p className="text-sm text-fg-muted">{status.detail}</p>
       <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
         <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{command}</code>
@@ -86,7 +85,25 @@ const CHECKS: Record<GitHubPullRequest["checks"], { tone: "success" | "danger" |
 
 const DEPLOY_TONE: Record<string, "success" | "danger" | "warning" | "neutral" | "info"> = { READY: "success", ERROR: "danger", CANCELED: "neutral", BUILDING: "info", QUEUED: "warning", INITIALIZING: "warning" };
 
-export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNode; project?: Project; session?: SessionSummary }) {
+function PanelHeader({ subtitle, actions, onClose }: { subtitle?: ReactNode; actions?: ReactNode; onClose: () => void }) {
+  return (
+    <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-1 border-b border-border/60 pl-3 pr-2">
+      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <h2 className="truncate text-sm font-medium text-fg">GitHub &amp; Vercel</h2>
+        {subtitle ? <span className="truncate text-xs text-fg-subtle">{subtitle}</span> : null}
+      </div>
+      {actions}
+      <Tooltip content="Close panel" shortcut="mod+shift+g">
+        <Button variant="ghost" size="icon" aria-label="Close GitHub & Vercel panel" onClick={onClose}>
+          <X />
+        </Button>
+      </Tooltip>
+    </header>
+  );
+}
+
+/** GitHub, Vercel and job activity for the active repository, shown as a right-side panel. */
+export function IntegrationsPanel({ project, session, onClose }: { project?: Project; session?: SessionSummary; onClose: () => void }) {
   const { navigate, composeInNewChat } = useAppState();
   const client = useClient();
   const projectId = client.mode === "live" && project && project.id !== MODEL_CHAT_PROJECT_ID ? project.id : undefined;
@@ -120,17 +137,17 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
 
   if (!projectId || !project)
     return (
-      <>
-        <ScreenHeader title="GitHub & Vercel" toolbar={toolbar} />
-        <ScreenBody>
+      <aside aria-label="GitHub and Vercel" className="flex h-full min-h-0 flex-col bg-surface">
+        <PanelHeader onClose={onClose} />
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-8">
           <EmptyState
             icon={<Github />}
             title={client.mode === "live" ? "Choose a repository" : "Integrations need the local runtime"}
             description="Pull requests, issues, branches and deployments are shown for a repository on this computer."
             action={<Button onClick={() => navigate("repositories")}>Open repository…</Button>}
           />
-        </ScreenBody>
-      </>
+        </div>
+      </aside>
     );
 
   const gh = github.data;
@@ -144,20 +161,21 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
     );
 
   return (
-    <>
-      <ScreenHeader
-        title="GitHub & Vercel"
-        subtitle={sessionId ? `${project.name} · worktree ${session?.worktree?.branch}` : project.name}
-        toolbar={toolbar}
+    <aside aria-label="GitHub and Vercel" className="flex h-full min-h-0 flex-col bg-surface">
+      <PanelHeader
+        onClose={onClose}
+        subtitle={sessionId ? `${project.name} · ${session?.worktree?.branch}` : project.name}
         actions={
-          <Button size="sm" variant="ghost" onClick={() => void (tab === "github" ? github.refetch() : tab === "vercel" ? vercel.refetch() : jobs.refetch())}>
-            <RefreshCw className={github.isFetching || vercel.isFetching ? "animate-spin" : ""} /> Refresh
-          </Button>
+          <Tooltip content="Refresh">
+            <Button size="icon" variant="ghost" aria-label="Refresh" onClick={() => void (tab === "github" ? github.refetch() : tab === "vercel" ? vercel.refetch() : jobs.refetch())}>
+              <RefreshCw className={github.isFetching || vercel.isFetching ? "animate-spin" : ""} />
+            </Button>
+          </Tooltip>
         }
       />
-      <ScreenBody width="max-w-5xl">
+      <div className="@container min-h-0 flex-1 overflow-y-auto px-3 py-3">
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="mb-5">
+          <TabsList className="mb-3 w-full [&>*]:flex-1">
             <TabsTrigger value="github">
               <Github className="size-3.5" /> GitHub
             </TabsTrigger>
@@ -169,14 +187,14 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
             </TabsTrigger>
           </TabsList>
 
-          {action.isError ? <p className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{errorMessage(action.error)}</p> : null}
+          {action.isError ? <p className="mb-3 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">{errorMessage(action.error)}</p> : null}
           {shownJob ? (
-            <Card title={shownJob.title} icon={<Sparkles />} className="mb-5" actions={<Button size="xs" variant="ghost" onClick={() => setShownJob(null)}>Dismiss</Button>}>
+            <Card title={shownJob.title} icon={<Sparkles />} className="mb-3" actions={<Button size="xs" variant="ghost" onClick={() => setShownJob(null)}>Dismiss</Button>}>
               <JobOutput job={shownJob} onCancel={() => cancelJob.mutate(shownJob.id)} className="max-h-72" />
             </Card>
           ) : null}
 
-          <TabsContent value="github" className="space-y-5">
+          <TabsContent value="github" className="space-y-3">
             {github.isPending ? (
               <Skeleton className="h-40 rounded-xl" />
             ) : github.isError ? (
@@ -192,7 +210,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                   icon={<GitBranch />}
                   actions={<span className="text-xs text-fg-muted">{gh.status.detail}</span>}
                 >
-                  <div className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto]">
+                  <div className="grid gap-2 px-3 py-3 @2xl:grid-cols-[1fr_auto]">
                     <form
                       className="flex min-w-0 gap-2"
                       onSubmit={(e) => {
@@ -206,7 +224,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                         <GitCommitHorizontal /> Commit all
                       </Button>
                     </form>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         onClick={() =>
                           ask({
@@ -226,7 +244,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                     </div>
                   </div>
                   {activity.data?.update.available && !activity.data.update.blockedReason ? (
-                    <div className="flex items-center gap-3 border-t border-border px-4 py-2 text-xs">
+                    <div className="flex items-center gap-3 border-t border-border px-3 py-2 text-xs">
                       <span className="flex-1 text-fg-muted">{activity.data.update.behind} new commit(s) on GitHub.</span>
                       <Button size="xs" onClick={() => update.mutate()} disabled={update.isPending}>
                         <RefreshCw className={update.isPending ? "animate-spin" : ""} /> Fast-forward
@@ -244,7 +262,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                         title={<>#{p.number} {p.title}</>}
                         detail={<>{p.headRefName} → {p.baseRefName} · {p.author} · {formatRelative(p.updatedAt)}</>}
                         trailing={
-                          <div className="hidden items-center gap-1.5 sm:flex">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             {p.isDraft ? <Badge>Draft</Badge> : null}
                             <Badge tone={p.state === "merged" ? "info" : p.state === "open" ? "success" : "neutral"} className="capitalize">{p.state}</Badge>
                             {p.state === "open" ? <Badge tone={CHECKS[p.checks].tone}>{CHECKS[p.checks].label}</Badge> : null}
@@ -269,7 +287,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                       />
                     ))
                   ) : (
-                    <p className="px-4 py-3 text-sm text-fg-muted">No pull requests yet.</p>
+                    <p className="px-3 py-3 text-sm text-fg-muted">No pull requests yet.</p>
                   )}
                 </Card>
 
@@ -289,11 +307,11 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                       />
                     ))
                   ) : (
-                    <p className="px-4 py-3 text-sm text-fg-muted">No open issues.</p>
+                    <p className="px-3 py-3 text-sm text-fg-muted">No open issues.</p>
                   )}
                 </Card>
 
-                <div className="grid gap-5 md:grid-cols-2">
+                <div className="grid gap-3 @3xl:grid-cols-2">
                   <Card title="Branches" icon={<GitBranch />}>
                     {gh.branches.slice(0, 10).map((b) => (
                       <Row key={b.name} title={<span className="font-mono text-xs">{b.name}</span>} detail={b.lastCommit} trailing={b.current ? <Badge tone="success">current</Badge> : b.upstream ? null : <Badge>local</Badge>} />
@@ -309,7 +327,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
             ) : null}
           </TabsContent>
 
-          <TabsContent value="vercel" className="space-y-5">
+          <TabsContent value="vercel" className="space-y-3">
             {vercel.isPending ? (
               <Skeleton className="h-40 rounded-xl" />
             ) : vercel.isError ? (
@@ -320,7 +338,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
               </Card>
             ) : vc && !vc.project ? (
               <Card title="Link a Vercel project" icon={<Rocket />}>
-                <div className="space-y-3 px-4 py-4 text-sm text-fg-muted">
+                <div className="space-y-3 px-3 py-4 text-sm text-fg-muted">
                   <p>{vc.status.detail}</p>
                   <p>
                     Run <code className="font-mono text-fg">vercel link</code> in this repository (the terminal under the editor works), then refresh.
@@ -332,7 +350,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                 title={vc.project?.name ?? "Deployments"}
                 icon={<Rocket />}
                 actions={
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <Button size="sm" onClick={() => ask({ title: "Deploy a preview", description: "Uploads this checkout (including uncommitted changes) to a new Vercel preview deployment.", risk: "medium", confirmLabel: "Deploy preview", input: { action: "vercel.deploy", target: "preview" } })}>
                       <Rocket /> Deploy preview
                     </Button>
@@ -370,7 +388,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                     />
                   ))
                 ) : (
-                  <p className="px-4 py-3 text-sm text-fg-muted">No deployments yet.</p>
+                  <p className="px-3 py-3 text-sm text-fg-muted">No deployments yet.</p>
                 )}
               </Card>
             ) : null}
@@ -392,12 +410,12 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
                   />
                 ))
               ) : (
-                <p className="px-4 py-3 text-sm text-fg-muted">Commits, pushes, pull requests, deployments and terminal commands appear here with their live output.</p>
+                <p className="px-3 py-3 text-sm text-fg-muted">Commits, pushes, pull requests, deployments and terminal commands appear here with their live output.</p>
               )}
             </Card>
           </TabsContent>
         </Tabs>
-      </ScreenBody>
+      </div>
 
       {pending ? (
         <ConfirmDialog
@@ -468,7 +486,7 @@ export function ActivityScreen({ toolbar, project, session }: { toolbar: ReactNo
           </div>
         </ConfirmDialog>
       ) : null}
-    </>
+    </aside>
   );
 }
 
@@ -487,9 +505,9 @@ function FailureHelper({ job, deployments, onFix }: { job: Job; deployments: Ver
   return (
     <Card title="Why the build failed" icon={<ScrollText />} actions={<Button size="sm" variant="primary" onClick={() => onFix(deployment, job.output)}><Sparkles /> Fix with an agent</Button>}>
       {errors.length ? (
-        <pre className="overflow-x-auto px-4 py-3 font-mono text-xs leading-relaxed text-danger">{errors.join("\n")}</pre>
+        <pre className="overflow-x-auto px-3 py-3 font-mono text-xs leading-relaxed text-danger">{errors.join("\n")}</pre>
       ) : (
-        <p className="px-4 py-3 text-sm text-fg-muted">No obvious error lines; see the full log above.</p>
+        <p className="px-3 py-3 text-sm text-fg-muted">No obvious error lines; see the full log above.</p>
       )}
     </Card>
   );

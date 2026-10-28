@@ -206,7 +206,7 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
           <WebAccess />
         </Section>
         <Section title="Integrations" description="GitHub and Vercel use your own CLI sign-ins. Nothing is stored by Agentic Hub.">
-          {client.mode === "demo" ? <p className="text-sm text-fg-muted">Switch to the local runtime to connect integrations.</p> : <IntegrationList onOpen={() => navigate("activity")} />}
+          {client.mode === "demo" ? <p className="text-sm text-fg-muted">Switch to the local runtime to connect integrations.</p> : <IntegrationList onOpen={() => setPrefs({ integrationsOpen: true })} />}
         </Section>
         <Section title="Layout" description="Panel sizes are remembered per window.">
           <Button
