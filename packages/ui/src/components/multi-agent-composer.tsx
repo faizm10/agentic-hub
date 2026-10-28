@@ -67,7 +67,7 @@ export function MultiAgentComposer({ agents, providers, assignments, onAssignmen
             value={goal}
             onChange={(e) => onGoalChange(e.target.value)}
             onKeyDown={onKeyDown}
-            rows={1}
+            rows={Math.min(3, Math.max(1, Math.ceil(goal.length / 90)))}
             placeholder="Shared goal (optional), e.g. “Add user settings”"
             className="w-full resize-none bg-transparent text-sm text-fg outline-none placeholder:text-fg-subtle"
           />
@@ -94,7 +94,8 @@ export function MultiAgentComposer({ agents, providers, assignments, onAssignmen
                 value={a.task}
                 onChange={(e) => update(a.id, { task: e.target.value })}
                 onKeyDown={onKeyDown}
-                rows={1}
+                // Grow with the text (up to four lines) so long tasks stay readable.
+                rows={Math.min(4, Math.max(1, Math.ceil(a.task.length / 72), a.task.split("\n").length))}
                 aria-label={`Task for ${AGENT_DISPLAY[a.agentId].name}`}
                 placeholder={i === 0 ? "This agent's task, e.g. “Build the settings page”" : i === 1 ? "A different task, e.g. “Write tests for the settings API”" : "Another part of the work"}
                 className="min-h-7 flex-1 resize-y bg-transparent py-1 text-sm text-fg outline-none placeholder:text-fg-subtle"
