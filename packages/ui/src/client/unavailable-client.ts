@@ -1,6 +1,7 @@
 import type { ConnectionInfo } from "../model/types";
 import { RuntimeUnavailableError } from "./errors";
 import type { AgentHubClient } from "./types";
+import { unsupportedWorkspace } from "./workspace-stubs";
 
 /**
  * Live-mode client used until the backend contract is integrated or when the
@@ -47,5 +48,6 @@ export function createUnavailableClient(options: { label: string; detail: string
     listDevices: reject,
     listActivity: reject,
     remoteActionsAvailable: () => false,
+    ...unsupportedWorkspace(() => new RuntimeUnavailableError()),
   };
 }

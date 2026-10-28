@@ -1,5 +1,19 @@
 import type { SessionEvent, StreamDeltaEvent } from "../model/events";
-import type { QueuedMessage, DeveloperActivity, IdeUpdateInfo } from "@agentic-hub/types";
+import type {
+  ApprovalPolicy,
+  DeveloperActivity,
+  EnvironmentReport,
+  FileContent,
+  FileEntry,
+  GitHubOverview,
+  GitHubRepoSummary,
+  IdeUpdateInfo,
+  IntegrationAction,
+  IntegrationStatus,
+  Job,
+  QueuedMessage,
+  VercelOverview,
+} from "@agentic-hub/types";
 import type {
   ActivityEntry,
   AgentDescriptor,
@@ -50,7 +64,8 @@ export interface AgentHubClient {
 
   listSessions(filter?: { projectId?: string }): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<SessionSnapshot>;
-  createSession(input: { projectId: string; agentId: AgentId; model?: string; prompt: string }): Promise<SessionSummary>;
+  /** `isolation: "worktree"` runs the agent on a new branch in its own Git worktree. */
+  createSession(input: { projectId: string; agentId: AgentId; model?: string; prompt: string; isolation?: "none" | "worktree" }): Promise<SessionSummary>;
   sendMessage(sessionId: string, text: string): Promise<void>;
   listQueuedMessages(sessionId: string): Promise<QueuedMessage[]>;
   removeQueuedMessage(sessionId: string, messageId: string): Promise<void>;
@@ -61,6 +76,29 @@ export interface AgentHubClient {
   getIdeUpdate(): Promise<IdeUpdateInfo>;
   openIdeUpdate(): Promise<void>;
   cancelRun(sessionId: string): Promise<void>;
+
+  // ── Workspace (desktop runtime only; other clients reject) ──
+  getEnvironment(options?: { refresh?: boolean }): Promise<EnvironmentReport>;
+  getApprovalPolicy(): Promise<ApprovalPolicy>;
+  setApprovalPolicy(policy: ApprovalPolicy): Promise<ApprovalPolicy>;
+  listIntegrations(): Promise<IntegrationStatus[]>;
+  listGitHubRepositories(): Promise<GitHubRepoSummary[]>;
+  /** Clones a GitHub repository (owner/name or URL) and registers it. */
+  cloneRepository(repository: string, directory?: string): Promise<Project>;
+  /** `sessionId` scopes file and Git operations to that session's worktree. */
+  listFiles(projectId: string, path: string, sessionId?: string): Promise<FileEntry[]>;
+  readFile(projectId: string, path: string, sessionId?: string): Promise<FileContent>;
+  writeFile(projectId: string, path: string, content: string, sessionId?: string): Promise<FileContent>;
+  runCommand(projectId: string, command: string, sessionId?: string): Promise<Job>;
+  listJobs(projectId?: string): Promise<Job[]>;
+  getJob(jobId: string): Promise<Job>;
+  cancelJob(jobId: string): Promise<void>;
+  /** Live output of a running job; `onDone` receives the final job. */
+  streamJob(jobId: string, handlers: { onOutput(chunk: string): void; onDone(job: Job): void; onError?(error: unknown): void }): Unsubscribe;
+  getGitHubOverview(projectId: string, sessionId?: string): Promise<GitHubOverview>;
+  getVercelOverview(projectId: string, sessionId?: string): Promise<VercelOverview>;
+  /** Non-low-risk actions reject with code `CONFIRMATION_REQUIRED` unless `confirm` is set. */
+  runIntegrationAction(projectId: string, input: IntegrationAction, options?: { confirm?: boolean; sessionId?: string }): Promise<Job>;
   resolveApproval(sessionId: string, approvalId: string, decision: ApprovalDecision): Promise<void>;
   getDiff(sessionId: string, path: string): Promise<FileDiff>;
   /** Stream session events with seq > `afterSeq`. */

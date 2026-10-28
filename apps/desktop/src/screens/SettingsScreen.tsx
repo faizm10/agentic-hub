@@ -1,6 +1,7 @@
-import { Button, Kbd, PairingSettings, SegmentedControl, ThemeToggle, safeStorage } from "@agentic-hub/ui";
-import { errorMessage, useAutoApprove, useClient, usePairing, usePairingActions, useSetAutoApprove } from "@agentic-hub/ui/client";
-import { FlaskConical, Plug } from "lucide-react";
+import { Badge, Button, Input, Kbd, PairingSettings, SegmentedControl, Switch, ThemeToggle, safeStorage } from "@agentic-hub/ui";
+import { errorMessage, useApprovalPolicy, useClient, useIntegrations, usePairing, usePairingActions, useSetApprovalPolicy } from "@agentic-hub/ui/client";
+import type { ApprovalPolicy } from "@agentic-hub/ui/model";
+import { FlaskConical, Plug, ShieldCheck, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { UpdatePanel, useAppVersion } from "../components/UpdateControls";
 import { isTauri } from "../platform/native";
@@ -12,6 +13,8 @@ const SHORTCUTS: [string, string][] = [
   ["mod+k", "Command palette"],
   ["mod+n", "New chat"],
   ["mod+o", "Open repository"],
+  ["mod+e", "Code: files and editor"],
+  ["mod+`", "Terminal"],
   ["mod+y", "All chats"],
   ["mod+b", "Toggle sidebar"],
   ["mod+j", "Toggle review panel"],
@@ -57,6 +60,94 @@ function WebAccess() {
   );
 }
 
+function ApprovalPolicySettings() {
+  const policy = useApprovalPolicy();
+  const save = useSetApprovalPolicy();
+  const [command, setCommand] = useState("");
+  if (policy.isPending) return <p className="text-sm text-fg-muted">Loading approval settings…</p>;
+  if (policy.isError) return <p className="text-sm text-danger">{errorMessage(policy.error)}</p>;
+  const value = policy.data;
+  const update = (patch: Partial<ApprovalPolicy>) => save.mutate({ ...value, ...patch });
+  return (
+    <div className="space-y-3">
+      <SegmentedControl<ApprovalPolicy["mode"]>
+        label="Approval mode"
+        value={value.mode}
+        onChange={(mode) => update({ mode })}
+        options={[
+          { value: "ask", label: "Ask every time" },
+          { value: "trusted", label: "Auto-approve low risk", icon: <ShieldCheck /> },
+        ]}
+      />
+      <p className="text-xs text-fg-muted">
+        {value.mode === "ask"
+          ? "Every command and file change waits for you."
+          : "Read-only tools and trusted commands run without asking. Anything else waits for you."}{" "}
+        <span className="text-fg">Destructive commands, pushes, deploys, permission changes and anything touching secrets always ask.</span>
+      </p>
+      {value.mode === "trusted" ? (
+        <div className="space-y-3 rounded-lg border border-border bg-surface p-3">
+          <label className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              Auto-approve file edits inside the repository
+              <span className="block text-xs text-fg-muted">Edits outside the repository, to .env files, keys or CI workflows still ask.</span>
+            </span>
+            <Switch checked={value.autoApproveFileEdits} onCheckedChange={(autoApproveFileEdits) => update({ autoApproveFileEdits })} />
+          </label>
+          <div>
+            <p className="text-sm">Trusted commands</p>
+            <p className="text-xs text-fg-muted">Besides built-ins like <code className="font-mono">git status</code>, <code className="font-mono">pnpm test</code> and <code className="font-mono">cargo check</code>. Matched as a prefix; chained commands (<code className="font-mono">&amp;&amp;</code>, pipes) always ask.</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {value.trustedCommands.map((c) => (
+                <Badge key={c} className="gap-1 font-mono">
+                  {c}
+                  <button type="button" aria-label={`Remove ${c}`} onClick={() => update({ trustedCommands: value.trustedCommands.filter((x) => x !== c) })}>
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+            <form
+              className="mt-2 flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const next = command.trim();
+                if (next && !value.trustedCommands.includes(next)) update({ trustedCommands: [...value.trustedCommands, next] });
+                setCommand("");
+              }}
+            >
+              <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="e.g. make lint" aria-label="Trusted command" className="max-w-xs font-mono text-xs" />
+              <Button type="submit" size="md" disabled={!command.trim()}>Add</Button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+      {save.isError ? <p className="text-xs text-danger">{errorMessage(save.error)}</p> : null}
+    </div>
+  );
+}
+
+function IntegrationList({ onOpen }: { onOpen: () => void }) {
+  const integrations = useIntegrations();
+  if (integrations.isPending) return <p className="text-sm text-fg-muted">Checking GitHub and Vercel sign-in…</p>;
+  if (integrations.isError) return <p className="text-sm text-danger">{errorMessage(integrations.error)}</p>;
+  return (
+    <div className="space-y-2">
+      {integrations.data.map((i) => (
+        <div key={i.id} className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+          <span className="w-16 text-sm font-medium">{i.name}</span>
+          <Badge tone={i.authenticated ? "success" : i.installed ? "warning" : "neutral"}>{i.authenticated ? "Connected" : i.installed ? "Signed out" : "Not installed"}</Badge>
+          <span className="min-w-0 flex-1 truncate text-xs text-fg-muted">{i.authenticated ? i.detail : <code className="font-mono">{i.installed ? i.connectCommand : i.detail}</code>}</span>
+        </div>
+      ))}
+      <div className="flex gap-2 pt-1">
+        <Button size="sm" onClick={onOpen}>Open GitHub &amp; Vercel</Button>
+        <Button size="sm" variant="ghost" onClick={() => void integrations.refetch()} disabled={integrations.isFetching}>Re-check</Button>
+      </div>
+    </div>
+  );
+}
+
 function RuntimeStatusRow() {
   const status = useNativeRuntimeStatus();
   if (!status) return <dd className="text-fg-muted">Vite bridge to <code className="font-mono text-xs">pnpm runtime:start</code></dd>;
@@ -77,8 +168,6 @@ function RuntimeStatusRow() {
 export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
   const { prefs, setPrefs, navigate } = useAppState();
   const client = useClient();
-  const autoApprove = useAutoApprove(client.mode === "live");
-  const setAutoApprove = useSetAutoApprove();
   const version = useAppVersion();
   const [layoutReset, setLayoutReset] = useState(false);
 
@@ -110,25 +199,14 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
             Manage providers
           </Button>
         </Section>
-        <Section title="Tool approvals" description="Choose how this computer answers coding agent approval requests.">
-          {client.mode === "demo" ? <p className="text-sm text-fg-muted">Switch to the local runtime to change approvals.</p> : autoApprove.isPending ? <p className="text-sm text-fg-muted">Loading approval settings…</p> : (
-            <SegmentedControl<"manual" | "automatic">
-              label="Tool approval mode"
-              value={autoApprove.data ? "automatic" : "manual"}
-              onChange={(mode) => void setAutoApprove.mutate(mode === "automatic")}
-              options={[{ value: "manual", label: "Ask me" }, { value: "automatic", label: "Auto approve" }]}
-            />
-          )}
-          <p className="mt-2 text-xs text-fg-muted">Auto approve allows requested commands and file changes without pausing. It applies to coding agents on this computer and is off by default.</p>
-          {autoApprove.isError ? <p className="mt-2 text-xs text-danger">{errorMessage(autoApprove.error)}</p> : null}
-          {setAutoApprove.isError ? <p className="mt-2 text-xs text-danger">{errorMessage(setAutoApprove.error)}</p> : null}
+        <Section title="Approvals" description="How coding agents' requests to run commands and edit files are answered.">
+          {client.mode === "demo" ? <p className="text-sm text-fg-muted">Switch to the local runtime to change approvals.</p> : <ApprovalPolicySettings />}
         </Section>
         <Section title="Web access" description="Use this computer's agents from the Agentic Hub website.">
           <WebAccess />
         </Section>
-        <Section title="GitHub and Vercel" description="View commits, pull requests, deployments, and repository updates in the IDE.">
-          <p className="mb-3 text-xs text-fg-muted">Use your existing CLI sign-ins: <code className="font-mono">gh auth login</code> and <code className="font-mono">vercel login</code>. Link the repository with <code className="font-mono">vercel link</code>.</p>
-          <Button size="sm" onClick={() => navigate("activity")}>Open developer activity</Button>
+        <Section title="Integrations" description="GitHub and Vercel use your own CLI sign-ins. Nothing is stored by Agentic Hub.">
+          {client.mode === "demo" ? <p className="text-sm text-fg-muted">Switch to the local runtime to connect integrations.</p> : <IntegrationList onOpen={() => navigate("activity")} />}
         </Section>
         <Section title="Layout" description="Panel sizes are remembered per window.">
           <Button

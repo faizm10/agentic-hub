@@ -24,13 +24,14 @@ import {
 } from "@agentic-hub/ui/client";
 import { isRunActive } from "@agentic-hub/ui/model";
 import { AGENT_DISPLAY } from "@agentic-hub/ui/model";
-import { Activity, FileDiff, FolderOpen, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, Sun } from "lucide-react";
+import { Activity, Code2, FileDiff, FolderOpen, GitFork, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, SquareTerminal, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { UpdatePill } from "./components/UpdateControls";
 import { platform, isTauri } from "./platform/native";
 import { startAutomaticUpdateChecks } from "./platform/updater";
 import { HistoryScreen } from "./screens/HistoryScreen";
 import { ActivityScreen } from "./screens/ActivityScreen";
+import { CodeScreen } from "./screens/CodeScreen";
 import { ProvidersScreen } from "./screens/ProvidersScreen";
 import { RepositoryScreen } from "./screens/RepositoryScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
@@ -93,6 +94,14 @@ export function Shell() {
     { keys: "mod+k", handler: () => setPaletteOpen((o) => !o) },
     { keys: "mod+n", handler: newSession, enabled: Boolean(activeProject) },
     { keys: "mod+o", handler: () => navigate("repositories") },
+    { keys: "mod+e", handler: () => navigate(view === "code" ? "workspace" : "code") },
+    {
+      keys: "mod+`",
+      handler: () => {
+        if (view !== "code") navigate("code");
+        setPrefs({ bottomPanelOpen: view !== "code" || !prefs.bottomPanelOpen });
+      },
+    },
     { keys: "mod+b", handler: () => setSidebarOpen(!sidebarOpen) },
     { keys: "mod+j", handler: () => setInspectorOpen(!inspectorOpen) },
     { keys: "mod+,", handler: () => navigate("settings") },
@@ -111,10 +120,19 @@ export function Shell() {
       { id: "new", group: "Actions", label: "New chat", icon: <Plus />, shortcut: "mod+n", run: newSession, disabled: !activeProject },
       { id: "new-model", group: "Actions", label: "New model chat", icon: <MessageSquareText />, run: newModelSession, disabled: !modelChats },
       { id: "open", group: "Actions", label: "Open repository…", icon: <FolderOpen />, shortcut: "mod+o", run: () => navigate("repositories") },
+      { id: "code", group: "Navigate", label: "Code: files and editor", icon: <Code2 />, shortcut: "mod+e", run: () => navigate("code") },
+      { id: "terminal", group: "Navigate", label: "Terminal", icon: <SquareTerminal />, shortcut: "mod+`", run: () => { navigate("code"); setPrefs({ bottomPanelOpen: true }); } },
+      {
+        id: "worktree",
+        group: "Actions",
+        label: prefs.isolateSessions ? "Run new agent chats in the current checkout" : "Run new agent chats in isolated worktrees",
+        icon: <GitFork />,
+        run: () => setPrefs({ isolateSessions: !prefs.isolateSessions }),
+      },
       { id: "review", group: "Actions", label: "Review changes", icon: <FileDiff />, shortcut: "mod+shift+d", run: () => openReview(), disabled: !snapshot.data?.changes.length },
       { id: "history", group: "Navigate", label: "All chats", icon: <History />, shortcut: "mod+y", run: () => navigate("history") },
       { id: "providers", group: "Navigate", label: "Providers", icon: <KeyRound />, run: () => navigate("providers") },
-      { id: "activity", group: "Navigate", label: "Developer activity", icon: <Activity />, run: () => navigate("activity") },
+      { id: "activity", group: "Navigate", label: "GitHub & Vercel", hint: "pull requests, issues, deployments", icon: <Activity />, run: () => navigate("activity") },
       { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => navigate("settings") },
       { id: "sidebar", group: "View", label: "Toggle sidebar", icon: <PanelLeft />, shortcut: "mod+b", run: () => setSidebarOpen(!sidebarOpen) },
       { id: "inspector", group: "View", label: "Toggle review panel", icon: <PanelRight />, shortcut: "mod+j", run: () => setInspectorOpen(!inspectorOpen) },
@@ -140,7 +158,7 @@ export function Shell() {
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.data, projects.data, activeProject, sidebarOpen, inspectorOpen, compact, resolved, snapshot.data?.changes.length]);
+  }, [sessions.data, projects.data, activeProject, sidebarOpen, inspectorOpen, compact, resolved, snapshot.data?.changes.length, prefs.isolateSessions]);
 
   const panelToggles = (
     <div className="flex items-center gap-0.5">
@@ -170,7 +188,9 @@ export function Shell() {
       case "providers":
         return <ProvidersScreen toolbar={panelToggles} />;
       case "activity":
-        return <ActivityScreen toolbar={panelToggles} project={activeProject} />;
+        return <ActivityScreen toolbar={panelToggles} project={activeProject} session={session} />;
+      case "code":
+        return <CodeScreen toolbar={panelToggles} project={activeProject} sessions={sessions.data ?? []} snapshot={snapshot.data} />;
       case "settings":
         return <SettingsScreen toolbar={panelToggles} />;
       default:
@@ -235,6 +255,7 @@ export function Shell() {
             onOpenHistory={() => navigate("history")}
             onOpenProviders={() => navigate("providers")}
             onOpenActivity={() => navigate("activity")}
+            onOpenCode={() => navigate("code")}
           />
         }
         main={main}

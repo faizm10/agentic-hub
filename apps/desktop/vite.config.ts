@@ -22,8 +22,8 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
-    // Desktop assets load from disk; a single ~180 KB (gzip) chunk is fine.
-    chunkSizeWarningLimit: 800,
+    // Desktop assets load from disk. Monaco (~3 MB) is a lazy chunk loaded when the editor opens.
+    chunkSizeWarningLimit: 3_000,
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: Boolean(process.env.TAURI_ENV_DEBUG),

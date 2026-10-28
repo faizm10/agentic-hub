@@ -9,6 +9,8 @@ import {
   ModelSelector,
   NewChatHero,
   SessionHeader,
+  Tooltip,
+  cn,
   type ChatComposerHandle,
 } from "@agentic-hub/ui";
 import {
@@ -27,7 +29,7 @@ import {
 } from "@agentic-hub/ui/client";
 import { AGENT_DISPLAY, MODEL_CHAT_PROJECT_ID, isRunActive, type AgentId, type Project, type SessionSnapshot } from "@agentic-hub/ui/model";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { FolderGit2, GitBranch, MessageSquare, X } from "lucide-react";
+import { FolderGit2, GitBranch, GitFork, MessageSquare, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { restartNativeRuntime, useNativeRuntimeStatus } from "../platform/runtime-status";
 import { useAppState } from "../state/app-state";
@@ -35,7 +37,7 @@ import { useAppState } from "../state/app-state";
 function ComposerFooter({ demo, project, agentId }: { demo: boolean; project?: Project; agentId: AgentId }) {
   if (demo) return <span className="text-info">Sample data. Replies are scripted, not a real agent.</span>;
   if (AGENT_DISPLAY[agentId].kind === "model") return <span>{AGENT_DISPLAY[agentId].name} answers in chat and can&rsquo;t see or change your files.</span>;
-  return project ? <span>{AGENT_DISPLAY[agentId].name} works in <span className="font-mono">{project.path}</span> and asks before risky actions.</span> : null;
+  return project ? <span>{AGENT_DISPLAY[agentId].name} works in <span className="font-mono">{project.path}</span> and always asks before risky actions.</span> : null;
 }
 
 function UnavailableMain({ toolbar, detail, onRetry }: { toolbar: ReactNode; detail: string; onRetry: () => void }) {
@@ -111,7 +113,7 @@ export function WorkspaceScreen({
   composerAgent: AgentId;
   onComposerAgentChange: (agentId: AgentId) => void;
 }) {
-  const { prefs, setPrefs, selectSession, navigate } = useAppState();
+  const { prefs, setPrefs, selectSession, navigate, draftPrompt, consumeDraftPrompt } = useAppState();
   const client = useClient();
   const demo = client.mode === "demo";
   const agents = useAgents();
@@ -134,6 +136,13 @@ export function WorkspaceScreen({
   useEffect(() => {
     composerRef.current?.focus();
   }, [sessionId]);
+
+  // Prompts handed over from other screens (issues, PR reviews, failed deploys).
+  useEffect(() => {
+    if (sessionId || draftPrompt === undefined) return;
+    const text = consumeDraftPrompt();
+    if (text) composerRef.current?.setText(text);
+  }, [sessionId, draftPrompt, consumeDraftPrompt, project?.id]);
 
   if (projectsQuery.isError) {
     if (isUnavailable(projectsQuery.error)) {
@@ -185,6 +194,21 @@ export function WorkspaceScreen({
                       disabled={!agents.data}
                     />
                     {choice.selector}
+                    {kind === "agent" && !demo ? (
+                      <Tooltip content={prefs.isolateSessions ? "Runs on a new branch in its own Git worktree, so your checkout stays untouched" : "Runs in your current checkout"}>
+                        <button
+                          type="button"
+                          onClick={() => setPrefs({ isolateSessions: !prefs.isolateSessions })}
+                          aria-pressed={prefs.isolateSessions}
+                          className={cn(
+                            "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-colors focus-ring",
+                            prefs.isolateSessions ? "bg-accent-soft text-accent" : "text-fg-muted hover:bg-surface-3 hover:text-fg",
+                          )}
+                        >
+                          <GitFork className="size-3.5" /> {prefs.isolateSessions ? "Worktree" : "Local"}
+                        </button>
+                      </Tooltip>
+                    ) : null}
                   </>
                 }
                 footer={
@@ -201,7 +225,13 @@ export function WorkspaceScreen({
                 onSubmit={async (prompt) => {
                   setActionError(null);
                   try {
-                    const session = await create.mutateAsync({ projectId: project.id, agentId: composerAgent, model: choice.model, prompt });
+                    const session = await create.mutateAsync({
+                      projectId: project.id,
+                      agentId: composerAgent,
+                      model: choice.model,
+                      prompt,
+                      isolation: kind === "agent" && prefs.isolateSessions ? "worktree" : "none",
+                    });
                     selectSession(session.id, project.id);
                   } catch (e) {
                     setActionError(errorMessage(e));

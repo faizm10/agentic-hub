@@ -84,7 +84,50 @@ Deltas have no `id`, are not persisted, and are never replayed after a reconnect
 On start the runtime takes an exclusive `runtime.lock` in its data directory (exit code 3 if another live runtime holds it), removes token files left by dead runtimes, and prints a machine-readable line for supervisors:
 
 ```
-AGENTIC_HUB_READY {"url":"http://127.0.0.1:PORT","tokenFile":"…/token-PID","pid":PID,"version":"0.2.0"}
+AGENTIC_HUB_READY {"url":"http://127.0.0.1:PORT","tokenFile":"…/token-PID","pid":PID,"version":"0.3.0"}
 ```
 
 With `AGENTIC_HUB_EXIT_WITH_PARENT=1` it shuts down when its stdin closes, so it never outlives the desktop app.
+
+## Workspace, integrations and approvals (v0.3)
+
+All routes need the bearer token. Where a route takes `?sessionId=`, it acts on that session's worktree instead of the main checkout.
+
+| Method | Path | Body / query | Returns |
+| --- | --- | --- | --- |
+| GET | `/settings` | | `{ autoApprove, approvalPolicy }` |
+| PATCH | `/settings` | `{ approvalPolicy }` or legacy `{ autoApprove }` | same |
+| GET | `/environment` | `?refresh` | `{ environment: { tools: ToolCheck[], cloneDirectory, platform } }` (Git, Node.js, Claude Code, Codex, gh, Vercel, Muse) |
+| GET | `/integrations` | | `{ integrations: IntegrationStatus[] }` |
+| GET | `/github/repositories` | | `{ repositories }` from `gh repo list` |
+| POST | `/projects/clone` | `{ repository: "owner/name" \| URL, directory? }` | `{ project }`, 201 when new |
+| POST | `/sessions` | `{ projectId, config, isolation?: "none" \| "worktree" }` | `{ session }` with `worktree: { path, branch, baseRef }` when isolated |
+| GET | `/projects/:id/files` | `?path=&sessionId=` | `{ entries: FileEntry[] }` (hides `.git`, `node_modules`, build output) |
+| GET | `/projects/:id/file` | `?path=&sessionId=` | `{ file: { path, content, language, binary, truncated, size } }` (2 MB cap) |
+| PUT | `/projects/:id/file` | `{ path, content }` | `{ file }`, written atomically |
+| POST | `/projects/:id/commands` | `{ command, sessionId? }` | 202 `{ job }`; runs in the user's login shell in the checkout |
+| POST | `/projects/:id/actions` | `{ input: IntegrationAction, confirm? }` | 202 `{ job }`; **428 `CONFIRMATION_REQUIRED`** for non-low-risk actions without `confirm: true` |
+| GET | `/projects/:id/github` | `?sessionId=` | `{ github: GitHubOverview }` (repo, branches, commits, PRs with checks/review state, open issues) |
+| GET | `/projects/:id/vercel` | `?sessionId=` | `{ vercel: VercelOverview }` (linked project, deployments) |
+| GET | `/jobs` | `?projectId=` | `{ jobs }` (output tail only) |
+| GET | `/jobs/:id` | | `{ job }` with full output (400 KB cap) |
+| POST | `/jobs/:id/cancel` | | `{ job }`; kills the process group |
+| GET | `/jobs/:id/stream` | `Accept: text/event-stream` | `snapshot`, then `output` (JSON string chunks), then `done` (final job) |
+
+File paths are relative to the checkout. Absolute paths, `..`, symlinks that resolve outside the checkout and `.git/` are rejected with 400.
+
+### Integration actions and their risk
+
+| Action | Runs | Risk |
+| --- | --- | --- |
+| `git.commit` | `git add -A && git commit` | low |
+| `github.pr.create` / `github.issue.create` | `gh pr create` / `gh issue create` | low |
+| `github.pr.review` | `gh pr review` (comment, request-changes: low; approve: medium) | low/medium |
+| `vercel.logs` | `vercel inspect <id> --logs` | low |
+| `git.push` | `git push --set-upstream origin <branch>` | medium; high on the default branch |
+| `vercel.deploy` | `vercel deploy` (preview: medium) / `--prod` (high) | medium/high |
+| `github.pr.merge` | `gh pr merge` | high |
+
+### Approval policy
+
+`approvalPolicy = { mode: "ask" | "trusted", autoApproveFileEdits, trustedCommands[] }`. Every `approval_requested` event carries `risk` (`low`/`medium`/`high`) and `riskReasons` from the runtime's classifier (`packages/agent-core/src/approval-policy.ts`). In `trusted` mode only **low** risk requests are approved automatically (marked `autoApproved: true`): read-only tools, built-in or user-trusted command prefixes without shell chaining, and, if enabled, file edits inside the checkout. High risk (recursive/forced deletes, `sudo`, `git push`, history rewrites, deploys, publishes, `chmod`/`chown`, secrets and credentials, `curl | sh`, CI workflow edits, destructive SQL, infrastructure changes) always waits for the user. Before v0.3, `autoApprove: true` approved everything; it now maps to `trusted`.

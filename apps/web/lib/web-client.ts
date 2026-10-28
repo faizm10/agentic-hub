@@ -25,6 +25,7 @@ import {
   toRunStatus,
   toSessionEvent,
   toSessionSummary,
+  unsupportedWorkspace,
   type AgentHubClient,
 } from "@agentic-hub/ui/client";
 import { AGENT_ORDER, MODEL_CHAT_PROJECT_ID, applySessionEvent, type SessionEvent, type StreamDeltaEvent } from "@agentic-hub/ui/model";
@@ -365,6 +366,7 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
     updateRepository: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Update repositories in the desktop app.")),
     getIdeUpdate: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "IDE updates are available in the desktop app.")),
     openIdeUpdate: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "IDE updates are available in the desktop app.")),
+    ...unsupportedWorkspace(() => new ApiError("UNSUPPORTED", 422, "Files, terminal and integrations run in the desktop app on your computer.")),
     async cancelRun(sessionId) {
       const ref = parseDeviceRef(sessionId);
       if (!ref) {

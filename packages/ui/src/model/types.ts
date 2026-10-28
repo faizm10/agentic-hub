@@ -86,6 +86,8 @@ export interface SessionSummary {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+  /** Set when the session runs in its own Git worktree. */
+  worktree?: { path: string; branch: string };
 }
 
 export type ToolKind = "shell" | "read" | "edit" | "write" | "search" | "web" | "test" | "other";
@@ -133,8 +135,11 @@ export interface ApprovalItem {
   reason?: string;
   command?: string;
   paths?: string[];
-  /** Only set when the provider reports a risk level; never guessed. */
+  /** Set by the runtime's approval policy; never guessed in the UI. */
   risk?: RiskLevel;
+  riskReasons?: string[];
+  /** Approved by the trusted policy without asking. */
+  autoApproved?: boolean;
   status: ApprovalStatus;
   createdAt: string;
   resolvedAt?: string;
@@ -250,4 +255,23 @@ export interface PairingInfo {
   lastSyncAt: string | null;
   lastError: string | null;
 }
-export type { QueuedMessage, DeveloperActivity, IdeUpdateInfo } from "@agentic-hub/types";
+export type {
+  ApprovalPolicy,
+  ApprovalRisk,
+  DeveloperActivity,
+  EnvironmentReport,
+  FileContent,
+  FileEntry,
+  GitHubIssue,
+  GitHubOverview,
+  GitHubPullRequest,
+  GitHubRepoSummary,
+  IdeUpdateInfo,
+  IntegrationAction,
+  IntegrationStatus,
+  Job,
+  QueuedMessage,
+  ToolCheck,
+  VercelDeployment,
+  VercelOverview,
+} from "@agentic-hub/types";

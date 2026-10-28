@@ -5,6 +5,7 @@
  * `mode: "demo"` so shells render a persistent demo label.
  */
 import type { AgentHubClient, Unsubscribe } from "../client/types";
+import { unsupportedWorkspace } from "../client/workspace-stubs";
 import { applySessionEvent, type SessionEvent, type SessionEventPayload } from "../model/events";
 import type { AgentId, ApprovalDecision, ConnectionInfo, Project, SessionSnapshot, SessionSummary } from "../model/types";
 import {
@@ -235,6 +236,7 @@ export function createDemoClient(options: DemoClientOptions = {}): AgentHubClien
     updateRepository: () => Promise.reject(new Error(READ_ONLY)),
     getIdeUpdate: () => Promise.reject(new Error(READ_ONLY)),
     openIdeUpdate: () => Promise.reject(new Error(READ_ONLY)),
+    ...unsupportedWorkspace(() => new Error(READ_ONLY)),
     async cancelRun(sessionId) {
       requireSession(sessionId);
       clearTimers(sessionId);

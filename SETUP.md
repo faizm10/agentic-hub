@@ -64,7 +64,21 @@ Unsigned builds work on your own Mac (right-click → Open). To distribute:
 
 These become env vars at build time (`APPLE_SIGNING_IDENTITY`, `APPLE_API_ISSUER`/`APPLE_API_KEY`/`APPLE_API_KEY_PATH`, or `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`). Full commands: [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
-## 5. Pair your Mac with the web app (after step 1)
+## 5. Automatic desktop updates (one time)
+
+The updater signing key was generated on 2026-10-28 and lives in `~/.agentic-hub-secrets/` (`tauri-updater.key`, `.key.password`, `.key.pub`); the public key is already in `tauri.conf.json`. **Back the private key and password up in a password manager**; without them, installed apps can't receive updates.
+
+Add them as GitHub Actions secrets, then push a tag to release:
+
+```sh
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.agentic-hub-secrets/tauri-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < ~/.agentic-hub-secrets/tauri-updater.key.password
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+Optional Apple secrets (Developer ID + notarization) are listed in [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
+
+## 6. Pair your Mac with the web app (after step 1)
 
 1. Web app → account menu → **Devices** → **Create pairing code**.
 2. Desktop app → **Settings → Web access** → web URL + code.

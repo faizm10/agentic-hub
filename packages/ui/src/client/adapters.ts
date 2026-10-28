@@ -124,11 +124,12 @@ export function toSessionSummary(
     title: extra.title ?? `${AGENT_DISPLAY[agentId].name} session`,
     agentId,
     status: toRunStatus(session.status),
-    branch: extra.branch ?? "detached HEAD",
+    branch: session.worktree?.branch ?? extra.branch ?? "detached HEAD",
     model: session.config.model,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     messageCount: extra.messageCount ?? 0,
+    ...(session.worktree ? { worktree: { path: session.worktree.path, branch: session.worktree.branch } } : {}),
   };
 }
 
@@ -168,6 +169,10 @@ function toApprovalPayload(approval: ApprovalRequest): Omit<ApprovalItem, "kind"
     title: APPROVAL_TITLE[approval.toolName] ?? `Use ${approval.toolName}`,
     // Provider-supplied, untrusted text. It's rendered as plain text, never HTML.
     reason: approval.description,
+    // Scored by the runtime's approval policy, not guessed here.
+    ...(approval.risk ? { risk: approval.risk } : {}),
+    ...(approval.riskReasons?.length ? { riskReasons: approval.riskReasons } : {}),
+    ...(approval.autoApproved ? { autoApproved: true } : {}),
   };
 }
 

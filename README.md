@@ -4,7 +4,7 @@ One workspace for your coding agents and AI models.
 
 - **Coding agents** work inside a Git repository on your computer: **Codex** (OpenAI, through its App Server), **Claude Code** (Anthropic, through the Claude Agent SDK) and **Muse Code** (Meta, through the Muse Session Protocol SDK). They stream replies, ask before risky tool calls, and show the resulting Git diff.
 - **Model APIs**: chat with **OpenAI** and **Anthropic** models through their official APIs, with model discovery and streaming.
-- **Desktop app** (macOS, Tauri 2) runs everything locally.
+- **Desktop app** (macOS, Tauri 2) runs everything locally, with a file explorer, Monaco editor, integrated terminal, isolated Git worktrees per agent session, GitHub and Vercel workflows, and signed automatic updates.
 - **Web app** (Next.js on Vercel) has accounts, web chats with model APIs, and a secure pairing link to your desktop so you can follow, and optionally control, agent sessions from anywhere.
 
 ```
@@ -79,16 +79,20 @@ For a universal (Apple Silicon + Intel) build: `rustup target add x86_64-apple-d
 1. The app finds Node.js 22.13+ through your login shell's `PATH` (so Homebrew, nvm, Volta and `~/.local/bin` installs work when launched from Finder). Set `AGENTIC_HUB_NODE` to override.
 2. It starts the bundled runtime on a random loopback port with its data in `~/Library/Application Support/dev.agentichub.desktop/runtime` (owner-only files: encrypted SQLite database, its key, a lock and the per-start token).
 3. If the runtime crashes it is restarted with backoff; the UI shows the state and a Retry button. Quitting the app stops the runtime gracefully (SIGTERM, then SIGKILL after 5 s).
-4. The first-run screen checks the runtime and providers, then asks you to open a repository.
+4. The first-run wizard detects Git, Node.js, Claude Code, Codex, the GitHub CLI and the Vercel CLI (with copyable install/sign-in commands), lets you clone a GitHub repository or pick a folder, and starts your first agent session.
+5. Updates install in place: the app checks GitHub Releases on launch and every 6 hours, shows **Update available**, downloads with progress, verifies the signature, and restarts. See [docs/DESKTOP_RELEASE.md](docs/DESKTOP_RELEASE.md).
 
 ### Using it
 
 - **New chat** (⌘N): pick an agent or model and, if supported, a model. Suggestions fill the composer.
-- Coding agents ask for approval before commands and file changes. Approve or deny inline; nothing is auto-approved.
+- Coding agents ask for approval before commands and file changes. Each request shows a risk level. **Settings → Approvals** can auto-approve low-risk requests (read-only tools, trusted commands such as `pnpm test`, optionally in-repo file edits); destructive commands, pushes, deploys, permission changes and secrets always ask.
+- **Worktree** toggle in the composer (or the command palette): the agent works on a new `agentic/…` branch in its own Git worktree, so several agents can run on one repository without touching your checkout.
+- **Code** (⌘E): file explorer, Monaco editor (⌘S saves), and a terminal plus activity feed (⌘\`). Files the active agent changes are marked live; the header shows what the agent is doing and when it needs you. Switch between the main checkout and session worktrees from the header.
+- **GitHub & Vercel**: commit, push, open pull requests, review and merge, open issues, hand an issue or PR to an agent, list deployments, deploy previews or production, and read build logs (with "Fix with an agent" for failed builds). Uses your `gh` and `vercel` sign-ins; pushes, merges and deploys need an explicit confirmation that the runtime enforces.
 - The review panel (⌘J) shows changed files and diffs from `git diff HEAD`, plus agent activity.
 - **Settings → Providers**: CLI sign-in status with install/sign-in commands, model lists, and API key entry for OpenAI and Anthropic. Keys are verified with the provider before they're saved, stored encrypted by the runtime, and never shown again.
 - **Settings → Web access**: pair this computer with your web account (see below).
-- Keyboard: ⌘K palette · ⌘N new chat · ⌘O open repository · ⌘B sidebar · ⌘J review panel · ⌘⇧D full diff · ⌘. stop · ⌘1–5 pick agent · ⌘Y all chats · ⌘, settings.
+- Keyboard: ⌘K palette · ⌘N new chat · ⌘O open repository · ⌘E code · ⌘\` terminal · ⌘B sidebar · ⌘J review panel · ⌘⇧D full diff · ⌘. stop · ⌘1–5 pick agent · ⌘Y all chats · ⌘, settings.
 
 ## Development
 
@@ -108,10 +112,11 @@ cp apps/web/.env.example apps/web/.env.local   # then fill it in
 pnpm dev:web                     # http://localhost:3200
 ```
 
-Checks:
+Checks (also run in CI by `.github/workflows/ci.yml`):
 
 ```sh
 pnpm check                       # typecheck + lint + tests + production builds, all packages
+pnpm version:check               # every version file agrees (semver)
 cd apps/desktop/src-tauri && cargo test   # Rust supervisor and bridge tests
 ```
 
@@ -147,7 +152,9 @@ Large tool outputs are truncated in the web copy (the full output stays on your 
 - **Encryption at rest.** Desktop: AES-256-GCM over all session, event, approval and credential payloads in SQLite, with an owner-only key file. Web: AES-256-GCM (`AGENTIC_HUB_ENCRYPTION_KEY`) over API keys, chat titles and events, device snapshots, synced events and commands.
 - **Accounts.** scrypt password hashes; random session tokens stored as SHA-256 hashes in HttpOnly, SameSite=Lax cookies (Secure in production); same-origin checks on every mutation; Postgres-backed rate limits on sign-up, sign-in and pairing.
 - **Devices.** Pairing codes are single use, expire in 10 minutes and are stored hashed. Device tokens are 256-bit, stored hashed and revocable. The runtime only accepts HTTPS control planes (HTTP only for localhost) and never listens on a public interface.
-- **Approvals.** Claude Code runs in `default` permission mode, so tool use goes through approvals; Codex and Muse forward their approval requests; unknown requests fail closed. Muse choices are matched to the server's offered options, preferring one-time grants.
+- **Approvals.** Claude Code runs in `default` permission mode, so tool use goes through approvals; Codex and Muse forward their approval requests; unknown requests fail closed. Muse choices are matched to the server's offered options, preferring one-time grants. The runtime scores every request; nothing above low risk is ever auto-approved, and provider permission modes are never bypassed.
+- **Workspace access.** File reads and writes are confined to the repository or session worktree (no `..`, absolute paths, escaping symlinks or `.git/`). Integration actions above low risk return `428 CONFIRMATION_REQUIRED` unless the request carries an explicit confirmation. Agentic Hub stores no GitHub or Vercel tokens; it calls the user's signed-in CLIs.
+- **Updates.** Only bundles signed with the updater key are installed; the public key is compiled into the app.
 - **Redaction.** Common API key and bearer token formats are redacted from stored prompts and events (best effort; avoid pasting credentials into prompts).
 
 ## Provider support
