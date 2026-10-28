@@ -13,7 +13,7 @@ import { HubError } from '@agentic-hub/agent-core';
 import type { Store } from '@agentic-hub/database';
 import { DeviceCommandSchema, type AgentEvent, type DeviceCommand, type DeviceSnapshot, type ModelInfo, type PairingStatus, type ProviderInfo, type QueuedMessage, type UsageReport } from '@agentic-hub/types';
 
-export const RUNTIME_VERSION = '0.3.0';
+export const RUNTIME_VERSION = '0.3.1';
 const CONFIG = 'controlPlane:config';
 const CURSORS = 'controlPlane:cursors';
 const MAX_EVENTS_PER_SYNC = 400;
