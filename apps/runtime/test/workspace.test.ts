@@ -20,6 +20,9 @@ async function setup() {
   const repo = join(dir, 'repo');
   const git = (...args: string[]) => exec('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=t@example.com', ...args]);
   await exec('git', ['init', '-q', '-b', 'main', repo]);
+  // CI runners have no global Git identity; actions that commit need one.
+  await exec('git', ['-C', repo, 'config', 'user.name', 'Test']);
+  await exec('git', ['-C', repo, 'config', 'user.email', 't@example.com']);
   await writeFile(join(repo, 'README.md'), '# hi\n');
   await git('add', '.');
   await git('commit', '-qm', 'init');
