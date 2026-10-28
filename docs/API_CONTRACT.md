@@ -17,7 +17,7 @@ The runtime binds to `127.0.0.1` by default. A random bearer token is generated 
 | GET | `/sessions` | — | `GetSessionsResponse` | All sessions, newest first. |
 | POST | `/sessions` | `CreateSessionRequest` | `SessionResponse` (201) | Create an idle session for a registered project and executable provider. |
 | GET | `/sessions/:id` | — | `SessionResponse` | Current persisted state. |
-| POST | `/sessions/:id/messages` | `SendMessageRequest` | `SendMessageResponse` (202) | Queue one turn. A session accepts only one active turn. |
+| POST | `/sessions/:id/messages` | `SendMessageRequest` | `SendMessageResponse` (202) | Starts a turn or persists it in the queue while another turn is active. |
 | POST | `/sessions/:id/cancel` | — | `CancelSessionResponse` | Request cancellation of an active turn; repeated cancellation is idempotent. |
 | GET | `/sessions/:id/events` | — | `GetSessionEventsResponse` or SSE | Replay and subscribe to ordered events. |
 | GET | `/sessions/:id/diff` | — | `GetSessionDiffResponse` | Current working tree diff for the session's project. |
@@ -33,7 +33,9 @@ SSE requires the same bearer header as JSON routes. Browser `EventSource` cannot
 
 Sessions begin `idle`. A message creates a task and run, then moves the session to `running`. A provider approval moves it to `awaiting_approval`; resolving it returns to `running`. A turn ends `completed`, `failed`, or `cancelled`. Another message may be sent after `completed`, `failed`, or `cancelled` if the adapter supports interactive messages. Runtime restart marks in-flight sessions and runs `interrupted`; interrupted sessions require a new message to resume and are never silently replayed. `providerSessionId` preserves the provider's opaque conversation identifier when available. No event is fabricated to imply a provider approval or tool action that the provider did not report. Runtime decisions and provider events share the same ordered log.
 
-Approval resolution must call the provider's supported mechanism before marking approval resolved. If that mechanism is unavailable, `/approvals/:id/resolve` returns `UNSUPPORTED_ACTION`; it never silently auto-approves. Clients should show `ApprovalRequest.description` as untrusted text.
+Approval resolution must call the provider's supported mechanism before marking approval resolved. If that mechanism is unavailable, `/approvals/:id/resolve` returns `UNSUPPORTED_ACTION`. The optional runtime auto-approve setting sends approval decisions through that same mechanism; it is off by default. Clients should show `ApprovalRequest.description` as untrusted text.
+
+Queued messages are encrypted in the local database. They run in order when the active turn finishes, and remaining messages resume after a runtime restart. `GET /sessions/:id/queue` lists them; `DELETE /sessions/:id/queue/:messageId` removes one before it starts.
 
 `GET /sessions/:id/diff` reads the repository's current working tree against `HEAD`. Its `files` list includes untracked files; `patch` includes tracked changes only. It is a current repository snapshot, not a per-turn patch. Worktree isolation and remote access are outside this local v1 runtime.
 
@@ -53,6 +55,14 @@ Non-2xx responses use `{ "error": { "code": "...", "message": "..." } }`. Expect
 | POST | `/pairing` | `PairDeviceRequest` | `{ pairing: PairingStatus }` | Pairs with a web app using a one-time code. |
 | PATCH | `/pairing` | `UpdatePairingRequest` | `{ pairing: PairingStatus }` | Turns "Allow control from the web" on or off. |
 | DELETE | `/pairing` | — | `{ pairing: PairingStatus }` | Unpairs. |
+| GET | `/settings` | — | `{ autoApprove: boolean }` | Reads the local approval setting. |
+| PATCH | `/settings` | `{ autoApprove: boolean }` | `{ autoApprove: boolean }` | Changes the local approval setting. |
+| GET | `/sessions/:id/queue` | — | `{ messages: QueuedMessage[] }` | Lists pending turns in order. |
+| DELETE | `/sessions/:id/queue/:messageId` | — | `{ removed: true }` | Removes a pending turn. |
+| GET | `/projects/:id/activity` | — | `{ activity: DeveloperActivity }` | GitHub commits and pull requests, Vercel deployments, and update status for a repository. Uses installed CLI sign-ins. |
+| POST | `/projects/:id/update` | — | `{ updated: true }` | Fetches and fast-forwards a clean checkout; rejects dirty or diverged branches. |
+| GET | `/ide-update` | — | `{ update: IdeUpdateInfo }` | Compares the installed version with the latest public GitHub release. |
+| POST | `/ide-update/open` | — | `{ opened: true }` | Opens the latest release page in the system browser when a newer version exists. |
 
 `ProviderInfo` gains optional `kind` (`agent` or `model`), `authMethod` (`cli` or `api-key`), `credential`, `version`, `defaultModel` and `setupUrl`. `AgentCapabilities` gains optional `modelDiscovery` and `textDeltas`. `GET /sessions` also returns `titles` and `messageCounts` keyed by session ID, and `GET /sessions/:id` returns `title` and `pendingApprovals`.
 

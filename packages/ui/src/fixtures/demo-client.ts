@@ -227,6 +227,14 @@ export function createDemoClient(options: DemoClientOptions = {}): AgentHubClien
     async sendMessage(sessionId, text) {
       startRun(sessionId, text);
     },
+    listQueuedMessages: () => wait([]),
+    removeQueuedMessage: () => Promise.reject(new Error(READ_ONLY)),
+    getAutoApprove: () => wait(false),
+    setAutoApprove: () => Promise.reject(new Error(READ_ONLY)),
+    getDeveloperActivity: () => Promise.reject(new Error(READ_ONLY)),
+    updateRepository: () => Promise.reject(new Error(READ_ONLY)),
+    getIdeUpdate: () => Promise.reject(new Error(READ_ONLY)),
+    openIdeUpdate: () => Promise.reject(new Error(READ_ONLY)),
     async cancelRun(sessionId) {
       requireSession(sessionId);
       clearTimers(sessionId);

@@ -14,7 +14,7 @@ import {
   groupSessions,
 } from "@agentic-hub/ui";
 import { errorMessage, isUnavailable, useProjects, useSessions } from "@agentic-hub/ui/client";
-import type { AgentId, RunStatus } from "@agentic-hub/ui/model";
+import { AGENT_ORDER, type AgentId, type RunStatus } from "@agentic-hub/ui/model";
 import { History, Search } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { useAppState } from "../state/app-state";
@@ -57,7 +57,7 @@ export function HistoryScreen({ toolbar }: { toolbar: ReactNode }) {
           label="Filter by agent"
           value={agent}
           onChange={setAgent}
-          options={[{ value: "all", label: "All agents" }, ...(["codex", "claude-code", "muse"] as const).map((id) => ({ value: id, label: AGENT_DISPLAY[id].name }))]}
+          options={[{ value: "all", label: "All agents" }, ...AGENT_ORDER.map((id) => ({ value: id, label: AGENT_DISPLAY[id].name }))]}
         />
         <SegmentedControl<StatusFilter>
           label="Filter by status"

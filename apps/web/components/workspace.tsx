@@ -48,7 +48,7 @@ import {
   useSessions,
   useSetApiKey,
 } from "@agentic-hub/ui/client";
-import { AGENT_DISPLAY, isRunActive, type AgentId } from "@agentic-hub/ui/model";
+import { AGENT_DISPLAY, MODEL_CHAT_PROJECT_ID, isRunActive, type AgentId } from "@agentic-hub/ui/model";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { KeyRound, LogOut, MessageSquare, Monitor, PanelLeft, Plus, Settings } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -105,6 +105,7 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
   const agents = useAgents();
   const project = projects.data?.find((p) => p.id === prefs.projectId) ?? projects.data?.[0];
   const cloud = project?.id === CLOUD_PROJECT_ID;
+  const deviceModelChat = project && !cloud && parseDeviceRef(project.id)?.id === MODEL_CHAT_PROJECT_ID;
   const snapshot = useSessionStream(view === "chat" ? prefs.sessionId : undefined);
   const session = snapshot.data?.session;
 
@@ -121,7 +122,7 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
   // Web chats offer model APIs with this account's keys; a computer's projects offer what that computer reports.
   const deviceId = project && !cloud ? parseDeviceRef(project.id)?.deviceId : undefined;
   const projectProviders = deviceId ? client.deviceProviders(deviceId) : providers.data;
-  const allowedAgents = (agents.data ?? []).filter((a) => (cloud ? a.kind === "model" : projectProviders?.some((p) => p.agentId === a.id)));
+  const allowedAgents = (agents.data ?? []).filter((a) => ((cloud || deviceModelChat) ? a.kind === "model" : projectProviders?.some((p) => p.agentId === a.id)));
   const firstReady = allowedAgents.find((a) => projectProviders?.find((p) => p.agentId === a.id)?.status === "ready");
   const composerAgent = allowedAgents.some((a) => a.id === prefs.agent) && projectProviders?.find((p) => p.agentId === prefs.agent)?.status === "ready"
     ? prefs.agent
@@ -229,8 +230,8 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
               <>
                 <NewChatHero
                   kind={kind}
-                  title={cloud ? "What’s on your mind?" : "What should we build today?"}
-                  subtitle={project && !cloud ? <span className="font-mono text-xs">{project.path}</span> : undefined}
+                  title={cloud || deviceModelChat ? "What’s on your mind?" : "What should we build today?"}
+                  subtitle={project && !cloud && !deviceModelChat ? <span className="font-mono text-xs">{project.path}</span> : undefined}
                   onSuggestion={blocked ? undefined : (prompt) => composerRef.current?.setText(prompt)}
                   className="mb-8"
                 />
@@ -267,8 +268,8 @@ function WorkspaceInner({ client, email }: { client: WebClient; email: string })
                       <button type="button" className="text-warning hover:underline" onClick={() => setView("providers")}>
                         Add your {AGENT_DISPLAY[composerAgent].name} API key →
                       </button>
-                    ) : cloud ? (
-                      <span>Runs on Agentic Hub with your {AGENT_DISPLAY[composerAgent].name} key. Can&rsquo;t see your files.</span>
+                    ) : cloud || deviceModelChat ? (
+                      <span>{cloud ? "Runs on Agentic Hub" : "Runs on your computer"} with your {AGENT_DISPLAY[composerAgent].name} key. Can&rsquo;t see your files.</span>
                     ) : (
                       <span>Runs on your computer. It may ask for approvals here or in the desktop app.</span>
                     )

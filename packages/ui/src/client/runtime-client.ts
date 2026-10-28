@@ -329,6 +329,30 @@ export function createRuntimeClient(options: RuntimeClientOptions): RuntimeClien
     async sendMessage(sessionId, text) {
       await request<SendMessageResponse>(`/sessions/${sessionId}/messages`, json("POST", { text }));
     },
+    async listQueuedMessages(sessionId) {
+      return (await request<{ messages: import("@agentic-hub/types").QueuedMessage[] }>(`/sessions/${sessionId}/queue`)).messages;
+    },
+    async removeQueuedMessage(sessionId, messageId) {
+      await request(`/sessions/${sessionId}/queue/${messageId}`, json("DELETE"));
+    },
+    async getAutoApprove() {
+      return (await request<{ autoApprove: boolean }>("/settings")).autoApprove;
+    },
+    async setAutoApprove(autoApprove) {
+      return (await request<{ autoApprove: boolean }>("/settings", json("PATCH", { autoApprove }))).autoApprove;
+    },
+    async getDeveloperActivity(projectId) {
+      return (await request<{ activity: import("@agentic-hub/types").DeveloperActivity }>(`/projects/${projectId}/activity`)).activity;
+    },
+    async updateRepository(projectId) {
+      await request(`/projects/${projectId}/update`, json("POST"));
+    },
+    async getIdeUpdate() {
+      return (await request<{ update: import("@agentic-hub/types").IdeUpdateInfo }>("/ide-update")).update;
+    },
+    async openIdeUpdate() {
+      await request("/ide-update/open", json("POST"));
+    },
     async cancelRun(sessionId) {
       await request<SessionResponse>(`/sessions/${sessionId}/cancel`, json("POST"));
     },

@@ -1,7 +1,8 @@
 "use client";
 
-import { ChevronsUpDown, FolderGit2, FolderOpen } from "lucide-react";
+import { ChevronsUpDown, FolderGit2, FolderOpen, MessageSquareText } from "lucide-react";
 import type { Project } from "../model/types";
+import { isModelChatProjectId } from "../model/agents";
 import { cn } from "../lib/cn";
 import {
   DropdownMenu,
@@ -41,11 +42,11 @@ export function ProjectSwitcher({
         aria-label="Switch project"
       >
         <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-fg-muted">
-          <FolderGit2 className="size-3.5" />
+          {active && isModelChatProjectId(active.id) ? <MessageSquareText className="size-3.5" /> : <FolderGit2 className="size-3.5" />}
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-fg">{active?.name ?? "Select a project"}</span>
-          {active ? <span className="block truncate font-mono text-2xs text-fg-subtle">{active.branch}</span> : null}
+          {active ? <span className="block truncate font-mono text-2xs text-fg-subtle">{isModelChatProjectId(active.id) ? "OpenAI and Claude" : active.branch}</span> : null}
         </span>
         <ChevronsUpDown className="size-3.5 shrink-0 text-fg-subtle" />
       </DropdownMenuTrigger>
@@ -56,7 +57,7 @@ export function ProjectSwitcher({
             <DropdownMenuRadioItem key={project.id} value={project.id} className="h-auto py-1.5">
               <div className="min-w-0">
                 <div className="truncate text-sm text-fg">{project.name}</div>
-                <div className="truncate font-mono text-2xs text-fg-subtle">{project.path}</div>
+                <div className="truncate font-mono text-2xs text-fg-subtle">{isModelChatProjectId(project.id) ? "OpenAI and Claude" : project.path}</div>
               </div>
             </DropdownMenuRadioItem>
           ))}

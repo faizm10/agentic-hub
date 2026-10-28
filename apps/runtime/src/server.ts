@@ -1,14 +1,16 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { ZodError } from 'zod';
+import { z, ZodError } from 'zod';
 import { AgentRegistry, HubError, SessionManager, providerErrorMessage } from '@agentic-hub/agent-core';
 import { Store } from '@agentic-hub/database';
 import { branchOf, diffOf, resolveRepository } from '@agentic-hub/git';
-import { AgentProviderSchema, CreateProjectRequestSchema, CreateSessionRequestSchema, PairDeviceRequestSchema, ResolveApprovalRequestSchema, SendMessageRequestSchema, SetCredentialRequestSchema, UpdatePairingRequestSchema, type AgentProvider } from '@agentic-hub/types';
+import { AgentProviderSchema, CreateProjectRequestSchema, CreateSessionRequestSchema, MODEL_CHAT_PROJECT_ID, PairDeviceRequestSchema, ResolveApprovalRequestSchema, SendMessageRequestSchema, SetCredentialRequestSchema, UpdatePairingRequestSchema, type AgentProvider } from '@agentic-hub/types';
 import type { ControlPlaneConnector } from './control-plane.js';
 import type { CredentialStore } from './credentials.js';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
+import { developerActivity, updateRepository } from './developer-activity.js';
+import { ideUpdate, openIdeUpdate } from './ide-update.js';
 
 function send(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -41,6 +43,9 @@ export interface RuntimeServerOptions {
 }
 
 export function createRuntimeServer(store: Store, registry: AgentRegistry, manager: SessionManager, token: string, options: RuntimeServerOptions = {}): Server {
+  if (!store.project(MODEL_CHAT_PROJECT_ID)) {
+    store.putProject({ id: MODEL_CHAT_PROJECT_ID, name: 'Chats', path: 'model://chats', branch: null, createdAt: new Date().toISOString() });
+  }
   const startedAt = new Date().toISOString();
   const version = options.version ?? '0.2.0';
   const provider = (raw: string): AgentProvider => {
@@ -60,6 +65,12 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
       }
       if (!authorized(request, token)) throw new HubError('UNAUTHORIZED', 401, 'Bearer token required');
       if (method === 'GET' && path === '/providers') { send(response, 200, { providers: await registry.list(url.searchParams.has('refresh')) }); return; }
+      if (path === '/settings') {
+        if (method === 'GET') { send(response, 200, { autoApprove: manager.autoApprove() }); return; }
+        if (method === 'PATCH') { const input = z.object({ autoApprove: z.boolean() }).parse(await body(request)); send(response, 200, { autoApprove: manager.setAutoApprove(input.autoApprove) }); return; }
+      }
+      if (method === 'GET' && path === '/ide-update') { send(response, 200, { update: await ideUpdate() }); return; }
+      if (method === 'POST' && path === '/ide-update/open') { await openIdeUpdate(); send(response, 200, { opened: true }); return; }
       const providerMatch = /^\/providers\/([a-z]+)\/(models|credentials)$/.exec(path);
       if (providerMatch) {
         const id = provider(providerMatch[1]!);
@@ -98,6 +109,21 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
         store.putProject(project);
         send(response, 201, { project }); return;
       }
+      const projectAction = /^\/projects\/([0-9a-f-]{36})\/(activity|update)$/.exec(path);
+      if (projectAction) {
+        const project = store.project(projectAction[1]!);
+        if (!project || project.id === MODEL_CHAT_PROJECT_ID) throw new HubError('NOT_FOUND', 404, 'Repository not found');
+        const activeRun = store.sessions().some(session => session.projectId === project.id && manager.isActive(session.id));
+        if (method === 'GET' && projectAction[2] === 'activity') {
+          const activity = await developerActivity(project.path);
+          if (activeRun) activity.update.blockedReason = 'Stop active runs before updating this repository.';
+          send(response, 200, { activity }); return;
+        }
+        if (method === 'POST' && projectAction[2] === 'update') {
+          if (activeRun) throw new HubError('CONFLICT', 409, 'Stop active runs before updating this repository.');
+          await updateRepository(project.path); send(response, 200, { updated: true }); return;
+        }
+      }
       if (method === 'GET' && path === '/sessions') {
         const sessions = store.sessions();
         const summaries = sessions.map(s => [s.id, store.sessionSummary(s.id)] as const);
@@ -107,19 +133,27 @@ export function createRuntimeServer(store: Store, registry: AgentRegistry, manag
         const input = CreateSessionRequestSchema.parse(await body(request));
         send(response, 201, { session: await manager.create(input.projectId, input.config) }); return;
       }
-      const sessionMatch = /^\/sessions\/([0-9a-f-]{36})(?:\/(messages|cancel|events|diff))?$/.exec(path);
+      const queuedMatch = /^\/sessions\/([0-9a-f-]{36})\/queue\/([0-9a-f-]{36})$/.exec(path);
+      if (method === 'DELETE' && queuedMatch) {
+        if (!store.session(queuedMatch[1]!)) throw new HubError('NOT_FOUND', 404, 'Session not found');
+        if (!store.deleteQueuedMessage(queuedMatch[1]!, queuedMatch[2]!)) throw new HubError('NOT_FOUND', 404, 'Queued message not found');
+        send(response, 200, { removed: true }); return;
+      }
+      const sessionMatch = /^\/sessions\/([0-9a-f-]{36})(?:\/(messages|queue|cancel|events|diff))?$/.exec(path);
       if (sessionMatch) {
         const id = sessionMatch[1]!;
         const action = sessionMatch[2];
         const session = store.session(id);
         if (!session) throw new HubError('NOT_FOUND', 404, 'Session not found');
         if (method === 'GET' && !action) { send(response, 200, { session, title: store.sessionTitle(id), pendingApprovals: store.pendingApprovals(id) }); return; }
+        if (method === 'GET' && action === 'queue') { send(response, 200, { messages: store.queuedMessages(id) }); return; }
         if (method === 'POST' && action === 'messages') {
           const input = SendMessageRequestSchema.parse(await body(request));
-          send(response, 202, await manager.send(id, input.text)); return;
+          send(response, 202, await manager.sendOrQueue(id, input.text)); return;
         }
         if (method === 'POST' && action === 'cancel') { send(response, 200, { session: await manager.cancel(id) }); return; }
         if (method === 'GET' && action === 'diff') {
+          if (session.projectId === MODEL_CHAT_PROJECT_ID) { send(response, 200, { diff: { files: [], patch: '' } }); return; }
           const project = store.project(session.projectId)!;
           send(response, 200, { diff: await diffOf(project.path, project.id) }); return;
         }

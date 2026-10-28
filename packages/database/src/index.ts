@@ -2,8 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import {
-  AgentEventSchema, ApprovalRequestSchema, ProjectSchema, SessionSchema, TaskRunSchema, TaskSchema,
-  type AgentEvent, type ApprovalRequest, type NewAgentEvent, type Project, type Session, type Task, type TaskRun,
+  AgentEventSchema, ApprovalRequestSchema, ProjectSchema, QueuedMessageSchema, SessionSchema, TaskRunSchema, TaskSchema,
+  type AgentEvent, type ApprovalRequest, type NewAgentEvent, type Project, type QueuedMessage, type Session, type Task, type TaskRun,
 } from '@agentic-hub/types';
 
 const parse = <T>(schema: { parse(value: unknown): T }, value: unknown): T => schema.parse(value);
@@ -75,9 +75,11 @@ export class Store {
       CREATE TABLE IF NOT EXISTS task_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), session_id TEXT NOT NULL REFERENCES sessions(id), status TEXT NOT NULL, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), task_run_id TEXT NOT NULL REFERENCES task_runs(id), sequence INTEGER NOT NULL, json TEXT NOT NULL, UNIQUE(session_id, sequence));
       CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), status TEXT NOT NULL, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS queued_messages (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), created_at TEXT NOT NULL, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS runtime_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id, sequence);
+      CREATE INDEX IF NOT EXISTS queued_messages_by_session ON queued_messages(session_id, created_at);
     `);
     try {
       this.key = storageKey(filename, this.db);
@@ -105,7 +107,7 @@ export class Store {
   private migratePlaintextRows(): void {
     let migrated = false;
     this.transaction(() => {
-      for (const table of ['projects', 'sessions', 'tasks', 'task_runs', 'events', 'approvals']) {
+      for (const table of ['projects', 'sessions', 'tasks', 'task_runs', 'events', 'approvals', 'queued_messages']) {
         const rows = this.db.prepare(`SELECT rowid, json FROM ${table} WHERE json NOT LIKE 'enc:v1:%'`).all() as { rowid: number; json: string }[];
         const update = this.db.prepare(`UPDATE ${table} SET json=? WHERE rowid=?`);
         for (const row of rows) {
@@ -141,6 +143,14 @@ export class Store {
   }
   session(id: string): Session | null { return fromRow(SessionSchema, this.db.prepare('SELECT json FROM sessions WHERE id=?').get(id), this.key); }
   sessions(): Session[] { return this.db.prepare('SELECT json FROM sessions ORDER BY updated_at DESC').all().map(row => fromRow(SessionSchema, row, this.key)!); }
+  enqueueMessage(sessionId: string, text: string): QueuedMessage {
+    const queued = QueuedMessageSchema.parse({ id: randomUUID(), sessionId, text: redactStoredText(text), createdAt: new Date().toISOString() });
+    this.db.prepare('INSERT INTO queued_messages (id,session_id,created_at,json) VALUES (?,?,?,?)').run(queued.id, queued.sessionId, queued.createdAt, seal(JSON.stringify(queued), this.key));
+    return queued;
+  }
+  queuedMessages(sessionId: string): QueuedMessage[] { return this.db.prepare('SELECT json FROM queued_messages WHERE session_id=? ORDER BY created_at, rowid').all(sessionId).map(row => fromRow(QueuedMessageSchema, row, this.key)!); }
+  queuedSessions(): string[] { return (this.db.prepare('SELECT DISTINCT session_id FROM queued_messages').all() as { session_id: string }[]).map(row => row.session_id); }
+  deleteQueuedMessage(sessionId: string, id: string): boolean { return this.db.prepare('DELETE FROM queued_messages WHERE session_id=? AND id=?').run(sessionId, id).changes > 0; }
   saveTask(task: Task): void {
     const stored = TaskSchema.parse({ ...task, prompt: redactStoredText(task.prompt) });
     this.db.prepare('INSERT INTO tasks (id,session_id,json) VALUES (?,?,?)').run(stored.id, stored.sessionId, seal(JSON.stringify(stored), this.key));

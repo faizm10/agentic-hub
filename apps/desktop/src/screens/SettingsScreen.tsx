@@ -1,6 +1,6 @@
 import { Button, Kbd, PairingSettings, SegmentedControl, ThemeToggle, safeStorage } from "@agentic-hub/ui";
-import { errorMessage, useClient, usePairing, usePairingActions } from "@agentic-hub/ui/client";
-import { FlaskConical, Plug } from "lucide-react";
+import { errorMessage, useAutoApprove, useClient, useIdeUpdate, useOpenIdeUpdate, usePairing, usePairingActions, useSetAutoApprove } from "@agentic-hub/ui/client";
+import { Download, FlaskConical, Plug, RefreshCw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { isTauri } from "../platform/native";
 import { restartNativeRuntime, useNativeRuntimeStatus } from "../platform/runtime-status";
@@ -20,7 +20,7 @@ const SHORTCUTS: [string, string][] = [
   ["mod+2", "Choose Claude Code (new chat)"],
   ["mod+3", "Choose Muse Code (new chat)"],
   ["mod+4", "Choose OpenAI (new chat)"],
-  ["mod+5", "Choose Anthropic (new chat)"],
+  ["mod+5", "Choose Claude (new chat)"],
   ["enter", "Send message"],
   ["shift+enter", "New line in message"],
   ["mod+,", "Settings"],
@@ -76,6 +76,10 @@ function RuntimeStatusRow() {
 export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
   const { prefs, setPrefs, navigate } = useAppState();
   const client = useClient();
+  const autoApprove = useAutoApprove(client.mode === "live");
+  const setAutoApprove = useSetAutoApprove();
+  const ideUpdate = useIdeUpdate(client.mode === "live");
+  const openIdeUpdate = useOpenIdeUpdate();
   const [layoutReset, setLayoutReset] = useState(false);
 
   return (
@@ -106,8 +110,34 @@ export function SettingsScreen({ toolbar }: { toolbar: ReactNode }) {
             Manage providers
           </Button>
         </Section>
+        <Section title="Tool approvals" description="Choose how this computer answers coding agent approval requests.">
+          {client.mode === "demo" ? <p className="text-sm text-fg-muted">Switch to the local runtime to change approvals.</p> : autoApprove.isPending ? <p className="text-sm text-fg-muted">Loading approval settings…</p> : (
+            <SegmentedControl<"manual" | "automatic">
+              label="Tool approval mode"
+              value={autoApprove.data ? "automatic" : "manual"}
+              onChange={(mode) => void setAutoApprove.mutate(mode === "automatic")}
+              options={[{ value: "manual", label: "Ask me" }, { value: "automatic", label: "Auto approve" }]}
+            />
+          )}
+          <p className="mt-2 text-xs text-fg-muted">Auto approve allows requested commands and file changes without pausing. It applies to coding agents on this computer and is off by default.</p>
+          {autoApprove.isError ? <p className="mt-2 text-xs text-danger">{errorMessage(autoApprove.error)}</p> : null}
+          {setAutoApprove.isError ? <p className="mt-2 text-xs text-danger">{errorMessage(setAutoApprove.error)}</p> : null}
+        </Section>
         <Section title="Web access" description="Use this computer's agents from the Agentic Hub website.">
           <WebAccess />
+        </Section>
+        <Section title="GitHub and Vercel" description="View commits, pull requests, deployments, and repository updates in the IDE.">
+          <p className="mb-3 text-xs text-fg-muted">Use your existing CLI sign-ins: <code className="font-mono">gh auth login</code> and <code className="font-mono">vercel login</code>. Link the repository with <code className="font-mono">vercel link</code>.</p>
+          <Button size="sm" onClick={() => navigate("activity")}>Open developer activity</Button>
+        </Section>
+        <Section title="IDE updates" description="Check this desktop app for releases published on GitHub.">
+          <p className="mb-3 text-sm text-fg-muted">{client.mode === "demo" ? "Switch to the local runtime to check for releases." : ideUpdate.isPending ? "Checking GitHub releases…" : ideUpdate.isError ? errorMessage(ideUpdate.error) : ideUpdate.data?.detail}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void ideUpdate.refetch()} disabled={client.mode === "demo" || ideUpdate.isFetching}><RefreshCw className={ideUpdate.isFetching ? "animate-spin" : ""} /> Check again</Button>
+            {ideUpdate.data?.available ? <Button size="sm" variant="primary" onClick={() => void openIdeUpdate.mutate()} disabled={openIdeUpdate.isPending}><Download /> Get update</Button> : null}
+          </div>
+          {openIdeUpdate.isError ? <p className="mt-2 text-xs text-danger">{errorMessage(openIdeUpdate.error)}</p> : null}
+          {ideUpdate.data?.available ? <p className="mt-2 text-xs text-fg-muted">Opens the GitHub release page so you can download and install the update.</p> : null}
         </Section>
         <Section title="Layout" description="Panel sizes are remembered per window.">
           <Button

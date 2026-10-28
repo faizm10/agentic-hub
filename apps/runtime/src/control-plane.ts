@@ -233,7 +233,7 @@ export class ControlPlaneConnector {
         await this.manager.send(session.id, command.text);
         return { sessionId: session.id };
       }
-      case 'send_message': await this.manager.send(command.sessionId, command.text); return {};
+      case 'send_message': await this.manager.sendOrQueue(command.sessionId, command.text); return {};
       case 'cancel': await this.manager.cancel(command.sessionId); return {};
       case 'resolve_approval': await this.manager.resolveApproval(command.approvalId, command.decision); return {};
     }

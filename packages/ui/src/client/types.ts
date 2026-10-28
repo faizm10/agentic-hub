@@ -1,4 +1,5 @@
 import type { SessionEvent, StreamDeltaEvent } from "../model/events";
+import type { QueuedMessage, DeveloperActivity, IdeUpdateInfo } from "@agentic-hub/types";
 import type {
   ActivityEntry,
   AgentDescriptor,
@@ -51,6 +52,14 @@ export interface AgentHubClient {
   getSession(sessionId: string): Promise<SessionSnapshot>;
   createSession(input: { projectId: string; agentId: AgentId; model?: string; prompt: string }): Promise<SessionSummary>;
   sendMessage(sessionId: string, text: string): Promise<void>;
+  listQueuedMessages(sessionId: string): Promise<QueuedMessage[]>;
+  removeQueuedMessage(sessionId: string, messageId: string): Promise<void>;
+  getAutoApprove(): Promise<boolean>;
+  setAutoApprove(enabled: boolean): Promise<boolean>;
+  getDeveloperActivity(projectId: string): Promise<DeveloperActivity>;
+  updateRepository(projectId: string): Promise<void>;
+  getIdeUpdate(): Promise<IdeUpdateInfo>;
+  openIdeUpdate(): Promise<void>;
   cancelRun(sessionId: string): Promise<void>;
   resolveApproval(sessionId: string, approvalId: string, decision: ApprovalDecision): Promise<void>;
   getDiff(sessionId: string, path: string): Promise<FileDiff>;

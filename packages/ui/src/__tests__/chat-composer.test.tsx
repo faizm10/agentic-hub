@@ -52,6 +52,15 @@ describe("ChatComposer", () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
+  it("sends a queued message while keeping Stop available", async () => {
+    const onCancel = vi.fn();
+    const { onSubmit, input } = setup({ running: true, queueWhileRunning: true, onCancel });
+    await userEvent.type(input, "next task{Enter}");
+    expect(onSubmit).toHaveBeenCalledWith("next task");
+    expect(screen.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queue message" })).toBeInTheDocument();
+  });
+
   it("explains why input is disabled", () => {
     const { input } = setup({ disabledReason: "Codex isn't ready" });
     expect(input).toBeDisabled();

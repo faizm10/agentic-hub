@@ -81,6 +81,7 @@ server.listen(port, '127.0.0.1', () => {
   // Machine-readable line for the desktop supervisor. Contains no secret.
   process.stdout.write(`AGENTIC_HUB_READY ${JSON.stringify({ url, tokenFile: tokenPath, pid: process.pid, version: RUNTIME_VERSION })}\n`);
   controlPlane.start();
+  manager.resumeQueues();
 });
 server.on('error', error => {
   process.stderr.write(`Runtime failed to listen: ${error.message}\n`);

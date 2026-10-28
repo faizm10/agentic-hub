@@ -27,7 +27,7 @@ import {
   toSessionSummary,
   type AgentHubClient,
 } from "@agentic-hub/ui/client";
-import { AGENT_ORDER, applySessionEvent, type SessionEvent, type StreamDeltaEvent } from "@agentic-hub/ui/model";
+import { AGENT_ORDER, MODEL_CHAT_PROJECT_ID, applySessionEvent, type SessionEvent, type StreamDeltaEvent } from "@agentic-hub/ui/model";
 import type { AgentId, ConnectionInfo, Device, Project, ProviderConfig, SessionSnapshot, SessionSummary } from "@agentic-hub/ui/model";
 import { CLOUD_PROJECT_ID, deviceRef, parseDeviceRef } from "./ids";
 
@@ -299,7 +299,7 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
     async listProjects() {
       await refreshDevices();
       const remote = devices.flatMap((device) =>
-        (device.snapshot?.projects ?? []).map((p) => ({ ...toProject(p), id: deviceRef(device.id, p.id), path: `${device.name} · ${p.path}` })),
+        (device.snapshot?.projects ?? []).map((p) => ({ ...toProject(p), id: deviceRef(device.id, p.id), path: `${device.name} · ${p.id === MODEL_CHAT_PROJECT_ID ? "Chats" : p.path}` })),
       );
       return [cloudProject(), ...remote];
     },
@@ -357,6 +357,14 @@ export function createWebClient(options: WebClientOptions = {}): WebClient {
       const { device, id } = deviceFor(sessionId);
       await command(device.id, { type: "send_message", sessionId: id, text });
     },
+    listQueuedMessages: async () => [],
+    removeQueuedMessage: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Manage queued messages in the desktop app.")),
+    getAutoApprove: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Approval settings are managed on your computer.")),
+    setAutoApprove: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Approval settings are managed on your computer.")),
+    getDeveloperActivity: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Developer activity is available in the desktop app.")),
+    updateRepository: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "Update repositories in the desktop app.")),
+    getIdeUpdate: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "IDE updates are available in the desktop app.")),
+    openIdeUpdate: () => Promise.reject(new ApiError("UNSUPPORTED", 422, "IDE updates are available in the desktop app.")),
     async cancelRun(sessionId) {
       const ref = parseDeviceRef(sessionId);
       if (!ref) {

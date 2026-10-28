@@ -13,10 +13,10 @@ const SUGGESTIONS: Record<AgentKind, { icon: ReactNode; label: string; prompt: s
     { icon: <ListChecks />, label: "Review my changes", prompt: "Review the uncommitted changes in this repository for correctness and style issues." },
   ],
   model: [
-    { icon: <MessageSquareText />, label: "Explain a concept", prompt: "Explain how async/await works under the hood in JavaScript, with a short example." },
-    { icon: <Sparkles />, label: "Draft a design", prompt: "Help me design a rate limiter for a public API. Compare two approaches and recommend one." },
-    { icon: <Bug />, label: "Debug an error", prompt: "I'll paste an error message and the relevant code. Help me find the root cause." },
-    { icon: <ListChecks />, label: "Write a regex", prompt: "Write a regular expression that validates semantic version strings, and explain each part." },
+    { icon: <MessageSquareText />, label: "Explain a topic", prompt: "Explain a topic I ask about in clear, simple terms with an example." },
+    { icon: <Sparkles />, label: "Brainstorm ideas", prompt: "Help me brainstorm ideas for a project. Ask a few questions to understand what I need." },
+    { icon: <ListChecks />, label: "Make a plan", prompt: "Help me turn a goal into a practical step-by-step plan." },
+    { icon: <FileSearch />, label: "Improve my writing", prompt: "I'll paste a draft. Help me make it clearer while keeping my voice." },
   ],
 };
 

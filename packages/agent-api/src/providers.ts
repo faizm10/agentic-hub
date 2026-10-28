@@ -13,7 +13,7 @@ export type ApiProvider = keyof typeof DEFAULT_MODELS;
 export const CAPABILITIES: AgentCapabilities = {
   execution: true, streaming: true, interactiveMessages: true, approvals: false, cancellation: true, gitDiff: false, modelDiscovery: true, textDeltas: true,
 };
-export const SYSTEM_PROMPT = 'You are a helpful coding assistant inside Agentic Hub. Use Markdown, and fence code blocks with a language tag.';
+export const SYSTEM_PROMPT = 'You are a helpful assistant inside Agentic Hub. Use Markdown, and fence code blocks with a language tag.';
 export const DISPLAY: Record<ApiProvider, { name: string; setupUrl: string; env: string }> = {
   openai: { name: 'OpenAI', setupUrl: 'https://platform.openai.com/api-keys', env: 'OPENAI_API_KEY' },
   anthropic: { name: 'Anthropic', setupUrl: 'https://console.anthropic.com/settings/keys', env: 'ANTHROPIC_API_KEY' },

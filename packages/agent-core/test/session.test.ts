@@ -41,6 +41,54 @@ async function setup() {
 }
 
 describe('session lifecycle', () => {
+  it('queues messages during a run and sends them in order', async () => {
+    const { store, adapter, manager, session } = await setup();
+    await manager.sendOrQueue(session.id, 'first');
+    const second = await manager.sendOrQueue(session.id, 'second');
+    expect(second).toHaveProperty('queued');
+    expect(store.queuedMessages(session.id).map(item => item.text)).toEqual(['second']);
+    adapter.instance.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(store.events(session.id).filter(event => event.type === 'message' && event.role === 'user').map(event => event.text)).toEqual(['first', 'second']);
+    expect(store.queuedMessages(session.id)).toEqual([]);
+    await manager.cancel(session.id);
+    store.close();
+  });
+
+  it('automatically resolves approvals only when enabled', async () => {
+    const { store, adapter, manager, session } = await setup();
+    expect(manager.autoApprove()).toBe(false);
+    manager.setAutoApprove(true);
+    await manager.send(session.id, 'work');
+    const approvalId = randomUUID();
+    adapter.instance.emit({ type: 'approval_requested', approval: { id: approvalId, sessionId: '', taskRunId: '', toolName: 'shell', description: 'run tests', status: 'pending', createdAt: new Date().toISOString(), resolvedAt: null } });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(store.approval(approvalId)?.status).toBe('approved');
+    expect(store.session(session.id)?.status).toBe('running');
+    await manager.cancel(session.id);
+    store.close();
+  });
+
+  it('resumes an encrypted queued message after a runtime restart', async () => {
+    const { store, manager, session } = await setup();
+    await manager.send(session.id, 'first');
+    await manager.sendOrQueue(session.id, 'after restart');
+    const filename = store.filename;
+    await manager.close();
+    const recovered = new Store(filename);
+    expect(recovered.queuedMessages(session.id).map(item => item.text)).toEqual(['after restart']);
+    const adapter = new FakeAdapter();
+    const registry = new AgentRegistry(); registry.register(adapter);
+    const resumed = new SessionManager(recovered, registry);
+    resumed.resumeQueues();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(recovered.events(session.id).filter(event => event.type === 'message' && event.role === 'user').map(event => event.text)).toEqual(['first', 'after restart']);
+    expect(recovered.queuedMessages(session.id)).toEqual([]);
+    await resumed.cancel(session.id);
+    recovered.close();
+  });
+
   it('rejects a second turn while the first adapter is starting', async () => {
     const { store, adapter, manager, session } = await setup();
     let release!: () => void;

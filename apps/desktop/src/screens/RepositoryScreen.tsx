@@ -1,4 +1,4 @@
-import { Button, DisconnectedState, EmptyState, ErrorState, Input, Kbd, SectionLabel, Skeleton, formatRelative } from "@agentic-hub/ui";
+import { Button, DisconnectedState, EmptyState, ErrorState, Input, Kbd, MODEL_CHAT_PROJECT_ID, SectionLabel, Skeleton, formatRelative } from "@agentic-hub/ui";
 import { errorMessage, isUnavailable, useAddProject, useClient, useProjects } from "@agentic-hub/ui/client";
 import { FolderGit2, FolderOpen, GitBranch, LoaderCircle } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -14,6 +14,7 @@ export function RepositoryScreen({ toolbar }: { toolbar: ReactNode }) {
   const [manualPath, setManualPath] = useState("");
   const [error, setError] = useState<string | null>(null);
   const native = isTauri();
+  const repositories = projects.data?.filter((p) => p.id !== MODEL_CHAT_PROJECT_ID);
 
   const register = async (path: string) => {
     setError(null);
@@ -90,11 +91,11 @@ export function RepositoryScreen({ toolbar }: { toolbar: ReactNode }) {
           ) : (
             <ErrorState compact message={errorMessage(projects.error)} onRetry={() => void projects.refetch()} />
           )
-        ) : projects.data.length === 0 ? (
+        ) : repositories?.length === 0 ? (
           <EmptyState compact icon={<FolderGit2 />} title="No repositories yet" description="Repositories you open will be listed here." />
         ) : (
           <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
-            {projects.data.map((p) => (
+            {repositories?.map((p) => (
               <li key={p.id}>
                 <button
                   type="button"

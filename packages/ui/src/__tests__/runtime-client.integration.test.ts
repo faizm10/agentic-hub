@@ -14,7 +14,7 @@ import { AgentRegistry, SessionManager, type AdapterSession, type AgentAdapter }
 import { MuseAdapter } from "@agentic-hub/agent-muse";
 import { Store } from "@agentic-hub/database";
 import { createRuntimeServer } from "@agentic-hub/runtime/dist/server.js";
-import type { AgentCapabilities, AgentProvider, ApprovalDecision, NewAgentEvent, ProviderInfo } from "@agentic-hub/types";
+import { MODEL_CHAT_PROJECT_ID, type AgentCapabilities, type AgentProvider, type ApprovalDecision, type NewAgentEvent, type ProviderInfo } from "@agentic-hub/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntimeClient, RuntimeUnavailableError, type RuntimeClient } from "../client";
 import { applySessionEvent, pendingApprovals } from "../model/events";
@@ -180,7 +180,7 @@ describe("runtime client against the real runtime server", () => {
     const { client, repo } = await setup();
     const project = await client.addProject(repo);
     expect(project.branch).toBe("main");
-    expect((await client.listProjects()).map((p) => p.id)).toEqual([project.id]);
+    expect((await client.listProjects()).map((p) => p.id)).toEqual([project.id, MODEL_CHAT_PROJECT_ID]);
 
     const created = await client.createSession({ projectId: project.id, agentId: "codex", prompt: "Update the readme" });
     expect(created.agentId).toBe("codex");

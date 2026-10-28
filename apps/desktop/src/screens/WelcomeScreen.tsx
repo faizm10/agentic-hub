@@ -55,7 +55,7 @@ export function WelcomeScreen() {
 
   const finish = (dataMode: "live" | "demo") => {
     setPrefs({ onboarded: true, dataMode });
-    navigate(dataMode === "live" ? "repositories" : "workspace");
+    navigate("workspace");
   };
 
   return (
@@ -68,7 +68,7 @@ export function WelcomeScreen() {
               <AgentMark key={id} agentId={id} size="lg" />
             ))}
           </div>
-          <h1 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.025em] text-fg">One workspace for your coding agents.</h1>
+          <h1 className="text-[1.75rem] font-semibold leading-tight tracking-[-0.025em] text-fg">One workspace for AI chats and coding agents.</h1>
           <p className="mt-2 text-base text-fg-muted">
             Codex, Claude Code and Muse Code work in your repositories. OpenAI and Anthropic models are a message away. Review every tool call and diff in one place.
           </p>
@@ -104,8 +104,8 @@ export function WelcomeScreen() {
               )}
               {connected && !ready.length ? <p className="mt-2">Sign in to a CLI or add an API key in Providers after setup.</p> : null}
             </Step>
-            <Step index={3} title="Open a repository" state="pending">
-              Coding agents work inside a Git repository you choose. Model chats are kept with that project too.
+            <Step index={3} title="Start a chat or open a repository" state="pending">
+              Chat with OpenAI or Claude directly. Coding agents work inside a Git repository you choose.
             </Step>
           </ol>
 

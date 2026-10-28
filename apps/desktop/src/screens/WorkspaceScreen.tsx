@@ -20,12 +20,14 @@ import {
   useCreateSession,
   useModels,
   useProviders,
+  useQueuedMessages,
+  useRemoveQueuedMessage,
   useResolveApproval,
   useSendMessage,
 } from "@agentic-hub/ui/client";
-import { AGENT_DISPLAY, isRunActive, type AgentId, type Project, type SessionSnapshot } from "@agentic-hub/ui/model";
+import { AGENT_DISPLAY, MODEL_CHAT_PROJECT_ID, isRunActive, type AgentId, type Project, type SessionSnapshot } from "@agentic-hub/ui/model";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { FolderGit2, GitBranch, MessageSquare } from "lucide-react";
+import { FolderGit2, GitBranch, MessageSquare, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { restartNativeRuntime, useNativeRuntimeStatus } from "../platform/runtime-status";
 import { useAppState } from "../state/app-state";
@@ -116,6 +118,8 @@ export function WorkspaceScreen({
   const providers = useProviders();
   const sessionId = prefs.activeSessionId;
   const send = useSendMessage(sessionId);
+  const queue = useQueuedMessages(sessionId);
+  const removeQueued = useRemoveQueuedMessage(sessionId);
   const cancel = useCancelRun(sessionId);
   const resolve = useResolveApproval(sessionId);
   const create = useCreateSession();
@@ -125,6 +129,7 @@ export function WorkspaceScreen({
   const actionError = errorState && errorState.sessionId === sessionId ? errorState.message : null;
   const setActionError = (message: string | null) => setErrorState(message ? { sessionId, message } : null);
   const choice = useModelChoice(composerAgent);
+  const modelChat = project?.id === MODEL_CHAT_PROJECT_ID;
 
   useEffect(() => {
     composerRef.current?.focus();
@@ -153,7 +158,7 @@ export function WorkspaceScreen({
               <NewChatHero
                 kind={kind}
                 title={kind === "model" ? "What’s on your mind?" : "What should we build today?"}
-                subtitle={
+                subtitle={modelChat ? undefined :
                   <span className="flex flex-wrap items-center justify-center gap-x-1.5">
                     <FolderGit2 className="size-3.5" /> {project.name}
                     <GitBranch className="ml-1 size-3.5" /> <span className="font-mono text-xs">{project.branch}</span>
@@ -169,7 +174,7 @@ export function WorkspaceScreen({
                 toolbar={
                   <>
                     <AgentSelector
-                      agents={agents.data ?? []}
+                      agents={modelChat ? (agents.data ?? []).filter((agent) => agent.kind === "model") : agents.data ?? []}
                       providers={providers.data}
                       value={composerAgent}
                       onChange={(id) => {
@@ -209,7 +214,7 @@ export function WorkspaceScreen({
             <EmptyState
               icon={<FolderGit2 />}
               title="Open a project to start"
-              description="Chats and agent runs belong to a Git repository on this computer."
+              description="Connect to the local runtime to start a model chat, or open a Git repository for a coding agent."
               action={
                 <Button variant="primary" size="sm" onClick={() => navigate("repositories")}>
                   Open repository…
@@ -249,9 +254,23 @@ export function WorkspaceScreen({
         onResolveApproval={(approvalId, decision) => resolve.mutateAsync({ approvalId, decision })}
         empty={<EmptyState icon={<MessageSquare />} title="No messages yet" description="Send a message to start." />}
       />
+      {queue.data?.length ? (
+        <div className="mx-auto w-full max-w-[48rem] px-3 pb-2 sm:px-6" aria-label="Queued messages">
+          <div className="max-h-36 space-y-1 overflow-y-auto rounded-xl border border-border bg-surface-2 p-2">
+            <p className="px-2 text-xs font-medium text-fg-muted">Queued messages · {queue.data.length}</p>
+            {queue.data.map((message) => (
+              <div key={message.id} className="flex items-center gap-2 rounded-lg bg-surface px-2 py-1.5 text-sm">
+                <span className="min-w-0 flex-1 truncate">{message.text}</span>
+                <Button size="icon" variant="ghost" aria-label="Remove queued message" onClick={() => removeQueued.mutate(message.id)}><X className="size-3.5" /></Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <ChatComposer
         ref={composerRef}
         running={running}
+        queueWhileRunning={!demo}
         cancelling={session?.status === "cancelling"}
         onCancel={() => cancel.mutate()}
         disabledReason={providerBlocked}

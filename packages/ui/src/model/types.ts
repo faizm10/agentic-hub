@@ -250,3 +250,4 @@ export interface PairingInfo {
   lastSyncAt: string | null;
   lastError: string | null;
 }
+export type { QueuedMessage, DeveloperActivity, IdeUpdateInfo } from "@agentic-hub/types";

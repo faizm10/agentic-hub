@@ -1,5 +1,6 @@
 import {
   AGENT_ORDER,
+  MODEL_CHAT_PROJECT_ID,
   AppShell,
   Button,
   CommandPalette,
@@ -23,10 +24,11 @@ import {
 } from "@agentic-hub/ui/client";
 import { isRunActive } from "@agentic-hub/ui/model";
 import { AGENT_DISPLAY } from "@agentic-hub/ui/model";
-import { FileDiff, FolderOpen, History, KeyRound, Moon, PanelLeft, PanelRight, Plus, Settings, Sun } from "lucide-react";
+import { Activity, FileDiff, FolderOpen, History, KeyRound, MessageSquareText, Moon, PanelLeft, PanelRight, Plus, Settings, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { platform, isTauri } from "./platform/native";
 import { HistoryScreen } from "./screens/HistoryScreen";
+import { ActivityScreen } from "./screens/ActivityScreen";
 import { ProvidersScreen } from "./screens/ProvidersScreen";
 import { RepositoryScreen } from "./screens/RepositoryScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
@@ -63,7 +65,9 @@ export function Shell() {
   const setSidebarOpen = (open: boolean) => (compact ? setDrawer(open ? "sidebar" : null) : setPrefs({ sidebarOpen: open }));
   const setInspectorOpen = (open: boolean) => (compact ? setDrawer(open ? "inspector" : null) : setPrefs({ inspectorOpen: open }));
 
-  const activeProject = projects.data?.find((p) => p.id === prefs.activeProjectId) ?? projects.data?.[0];
+  const activeProject = projects.data?.find((p) => p.id === prefs.activeProjectId) ?? projects.data?.find((p) => p.id !== MODEL_CHAT_PROJECT_ID) ?? projects.data?.[0];
+  const modelChats = projects.data?.find((p) => p.id === MODEL_CHAT_PROJECT_ID);
+  const activeComposerAgent = activeProject?.id === MODEL_CHAT_PROJECT_ID && AGENT_DISPLAY[composerAgent].kind === "agent" ? "openai" : composerAgent;
   const snapshot = useSessionStream(prefs.activeSessionId);
   const session = snapshot.data?.session;
   const cancel = useCancelRun(prefs.activeSessionId);
@@ -73,13 +77,11 @@ export function Shell() {
     if (activeProject && activeProject.id !== prefs.activeProjectId) setPrefs({ activeProjectId: activeProject.id });
   }, [activeProject, prefs.activeProjectId, setPrefs]);
 
-  // First run with no repositories: send people to the picker.
-  useEffect(() => {
-    if (view === "workspace" && projects.data && projects.data.length === 0) navigate("repositories");
-  }, [view, projects.data, navigate]);
-
   const newSession = () => {
     selectSession(undefined, activeProject?.id);
+  };
+  const newModelSession = () => {
+    if (modelChats) selectSession(undefined, modelChats.id);
   };
   const canCancel = session ? isRunActive(session.status) && session.status !== "cancelling" : false;
 
@@ -103,10 +105,12 @@ export function Shell() {
   const commands = useMemo<PaletteCommand[]>(() => {
     const list: PaletteCommand[] = [
       { id: "new", group: "Actions", label: "New chat", icon: <Plus />, shortcut: "mod+n", run: newSession, disabled: !activeProject },
+      { id: "new-model", group: "Actions", label: "New model chat", icon: <MessageSquareText />, run: newModelSession, disabled: !modelChats },
       { id: "open", group: "Actions", label: "Open repository…", icon: <FolderOpen />, shortcut: "mod+o", run: () => navigate("repositories") },
       { id: "review", group: "Actions", label: "Review changes", icon: <FileDiff />, shortcut: "mod+shift+d", run: () => openReview(), disabled: !snapshot.data?.changes.length },
       { id: "history", group: "Navigate", label: "All chats", icon: <History />, shortcut: "mod+y", run: () => navigate("history") },
       { id: "providers", group: "Navigate", label: "Providers", icon: <KeyRound />, run: () => navigate("providers") },
+      { id: "activity", group: "Navigate", label: "Developer activity", icon: <Activity />, run: () => navigate("activity") },
       { id: "settings", group: "Navigate", label: "Settings", icon: <Settings />, shortcut: "mod+,", run: () => navigate("settings") },
       { id: "sidebar", group: "View", label: "Toggle sidebar", icon: <PanelLeft />, shortcut: "mod+b", run: () => setSidebarOpen(!sidebarOpen) },
       { id: "inspector", group: "View", label: "Toggle review panel", icon: <PanelRight />, shortcut: "mod+j", run: () => setInspectorOpen(!inspectorOpen) },
@@ -161,6 +165,8 @@ export function Shell() {
         return <ReviewScreen toolbar={panelToggles} snapshot={snapshot.data} />;
       case "providers":
         return <ProvidersScreen toolbar={panelToggles} />;
+      case "activity":
+        return <ActivityScreen toolbar={panelToggles} project={activeProject} />;
       case "settings":
         return <SettingsScreen toolbar={panelToggles} />;
       default:
@@ -170,14 +176,14 @@ export function Shell() {
             project={activeProject}
             projectsQuery={projects}
             snapshotQuery={snapshot}
-            composerAgent={composerAgent}
+            composerAgent={activeComposerAgent}
             onComposerAgentChange={setComposerAgent}
           />
         );
     }
   })();
 
-  const showInspector = view === "workspace" && Boolean(snapshot.data);
+  const showInspector = view === "workspace" && Boolean(snapshot.data) && (!session || AGENT_DISPLAY[session.agentId].kind === "agent");
 
   return (
     <>
@@ -215,13 +221,15 @@ export function Shell() {
             sessionsUnavailable={sessions.isError ? "Chats are unavailable while the runtime is offline." : undefined}
             activeProjectId={activeProject?.id}
             activeSessionId={view === "workspace" ? prefs.activeSessionId : undefined}
-            onSelectProject={(id) => setPrefs({ activeProjectId: id })}
+            onSelectProject={(id) => selectSession(undefined, id)}
             onSelectSession={(id) => selectSession(id, sessions.data?.find((s) => s.id === id)?.projectId)}
             onNewSession={activeProject ? newSession : undefined}
+            onNewModelSession={modelChats ? newModelSession : undefined}
             onOpenRepository={() => navigate("repositories")}
             onOpenSettings={() => navigate("settings")}
             onOpenHistory={() => navigate("history")}
             onOpenProviders={() => navigate("providers")}
+            onOpenActivity={() => navigate("activity")}
           />
         }
         main={main}

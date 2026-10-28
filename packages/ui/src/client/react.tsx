@@ -29,6 +29,10 @@ export const queryKeys = {
   diff: (sessionId: string, path: string) => ["diff", sessionId, path] as const,
   devices: ["devices"] as const,
   activity: ["activity"] as const,
+  queue: (sessionId: string) => ["queue", sessionId] as const,
+  autoApprove: ["autoApprove"] as const,
+  developerActivity: (projectId: string) => ["developerActivity", projectId] as const,
+  ideUpdate: ["ideUpdate"] as const,
 };
 
 export function useConnection() {
@@ -197,7 +201,51 @@ export function useSessionStream(sessionId: string | undefined) {
 
 export function useSendMessage(sessionId: string | undefined) {
   const client = useClient();
-  return useMutation({ mutationFn: (text: string) => client.sendMessage(sessionId!, text) });
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (text: string) => client.sendMessage(sessionId!, text), onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.queue(sessionId ?? "") }) });
+}
+
+export function useQueuedMessages(sessionId: string | undefined) {
+  const client = useClient();
+  return useQuery({ queryKey: queryKeys.queue(sessionId ?? ""), queryFn: () => client.listQueuedMessages(sessionId!), enabled: Boolean(sessionId), refetchInterval: 2_000 });
+}
+
+export function useRemoveQueuedMessage(sessionId: string | undefined) {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (messageId: string) => client.removeQueuedMessage(sessionId!, messageId), onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.queue(sessionId ?? "") }) });
+}
+
+export function useAutoApprove(enabled = true) {
+  const client = useClient();
+  return useQuery({ queryKey: queryKeys.autoApprove, queryFn: () => client.getAutoApprove(), enabled });
+}
+
+export function useSetAutoApprove() {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: (enabled: boolean) => client.setAutoApprove(enabled), onSuccess: (enabled) => queryClient.setQueryData(queryKeys.autoApprove, enabled) });
+}
+
+export function useDeveloperActivity(projectId: string | undefined) {
+  const client = useClient();
+  return useQuery({ queryKey: queryKeys.developerActivity(projectId ?? ""), queryFn: () => client.getDeveloperActivity(projectId!), enabled: Boolean(projectId), staleTime: 30_000 });
+}
+
+export function useUpdateRepository(projectId: string | undefined) {
+  const client = useClient();
+  const queryClient = useQueryClient();
+  return useMutation({ mutationFn: () => client.updateRepository(projectId!), onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.developerActivity(projectId ?? "") }) });
+}
+
+export function useIdeUpdate(enabled = true) {
+  const client = useClient();
+  return useQuery({ queryKey: queryKeys.ideUpdate, queryFn: () => client.getIdeUpdate(), enabled, staleTime: 5 * 60_000 });
+}
+
+export function useOpenIdeUpdate() {
+  const client = useClient();
+  return useMutation({ mutationFn: () => client.openIdeUpdate() });
 }
 
 export function useCancelRun(sessionId: string | undefined) {

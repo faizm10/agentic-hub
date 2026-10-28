@@ -2,7 +2,7 @@
 
 import { GitBranch, Square } from "lucide-react";
 import type { ReactNode } from "react";
-import { AGENT_DISPLAY } from "../model/agents";
+import { AGENT_DISPLAY, isModelChatProjectId } from "../model/agents";
 import { isRunActive } from "../model/events";
 import type { Project, SessionSummary } from "../model/types";
 import { cn } from "../lib/cn";
@@ -37,7 +37,7 @@ export function SessionHeader({
         {session ? <AgentMark agentId={session.agentId} /> : null}
         <div className="flex min-w-0 items-baseline gap-2">
           <h1 className="truncate text-sm font-medium text-fg">{session?.title ?? "New chat"}</h1>
-          {project ? (
+          {project && !isModelChatProjectId(project.id) ? (
             <span className="hidden min-w-0 items-center gap-1 truncate text-xs text-fg-subtle md:inline-flex">
               <span className="truncate">{project.name}</span>
               <GitBranch className="size-3 shrink-0" />

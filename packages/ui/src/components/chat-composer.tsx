@@ -18,6 +18,8 @@ export interface ChatComposerProps {
   onCancel?: () => void;
   /** A run is in progress; the primary button becomes Stop. */
   running?: boolean;
+  /** Keep the send button available while a run is active; the backend queues the message. */
+  queueWhileRunning?: boolean;
   cancelling?: boolean;
   /** Disable input entirely and show why. */
   disabledReason?: string;
@@ -29,7 +31,7 @@ export interface ChatComposerProps {
 }
 
 export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(function ChatComposer(
-  { onSubmit, onCancel, running, cancelling, disabledReason, placeholder = "Ask the agent to change something…", toolbar, footer, className },
+  { onSubmit, onCancel, running, queueWhileRunning, cancelling, disabledReason, placeholder = "Ask the agent to change something…", toolbar, footer, className },
   ref,
 ) {
   const [value, setValue] = useState("");
@@ -55,7 +57,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   }, [value]);
 
   const disabled = Boolean(disabledReason);
-  const canSend = !disabled && !running && !submitting && value.trim().length > 0;
+  const canSend = !disabled && (!running || queueWhileRunning) && !submitting && value.trim().length > 0;
 
   const submit = async () => {
     if (!canSend) return;
@@ -113,20 +115,21 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
                 <Square className="fill-current !size-3" />
               </Button>
             </Tooltip>
-          ) : (
-            <Tooltip content="Send" shortcut="enter">
+          ) : null}
+          {!running || queueWhileRunning ? (
+            <Tooltip content={running ? "Queue message" : "Send"} shortcut="enter">
               <Button
                 variant="primary"
                 size="icon"
                 onClick={() => void submit()}
                 disabled={!canSend}
-                aria-label="Send message"
+                aria-label={running ? "Queue message" : "Send message"}
                 className="size-8 rounded-full bg-fg text-bg hover:bg-fg/85"
               >
                 <ArrowUp />
               </Button>
             </Tooltip>
-          )}
+          ) : null}
         </div>
       </div>
       <div className="mt-2 flex min-h-4 items-center justify-between gap-3 px-3 text-2xs text-fg-subtle">

@@ -1,6 +1,6 @@
 "use client";
 
-import { History, KeyRound, Search, Settings, SquarePen } from "lucide-react";
+import { Activity, History, KeyRound, MessageSquareText, Search, Settings, SquarePen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AGENT_DISPLAY } from "../model/agents";
 import type { ConnectionInfo, Project, ProviderConfig, SessionSummary } from "../model/types";
@@ -41,10 +41,12 @@ export interface ProjectSidebarProps {
   onSelectProject: (projectId: string) => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession?: () => void;
+  onNewModelSession?: () => void;
   onOpenRepository?: () => void;
   onOpenSettings?: () => void;
   onOpenHistory?: () => void;
   onOpenProviders?: () => void;
+  onOpenActivity?: () => void;
   /** Rendered above everything (e.g. a desktop drag region spacer). */
   header?: ReactNode;
   /** Rendered at the very bottom, e.g. an account menu. */
@@ -66,10 +68,12 @@ export function ProjectSidebar({
   onSelectProject,
   onSelectSession,
   onNewSession,
+  onNewModelSession,
   onOpenRepository,
   onOpenSettings,
   onOpenHistory,
   onOpenProviders,
+  onOpenActivity,
   header,
   footer,
   connectedLabel,
@@ -93,6 +97,12 @@ export function ProjectSidebar({
           <span className="flex-1 text-left">New chat</span>
           <Kbd keys="mod+n" className="opacity-0 transition-opacity group-hover:opacity-100" />
         </button>
+        {onNewModelSession ? (
+          <button type="button" onClick={onNewModelSession} className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-fg transition-colors hover:bg-surface-3 focus-ring">
+            <MessageSquareText className="size-4" />
+            <span className="flex-1 text-left">New model chat</span>
+          </button>
+        ) : null}
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
           <input
@@ -118,6 +128,11 @@ export function ProjectSidebar({
         )}
       </div>
       <footer className="space-y-0.5 border-t border-border p-2.5">
+        {onOpenActivity ? (
+          <button type="button" onClick={onOpenActivity} className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-fg-muted transition-colors hover:bg-surface-3 hover:text-fg focus-ring">
+            <Activity className="size-4" /> Developer activity
+          </button>
+        ) : null}
         {onOpenProviders ? (
           <button
             type="button"

@@ -94,7 +94,7 @@ export class ClaudeSession implements AdapterSession {
     const previous = this.providerSessionId;
     const conversation = query({ prompt: text, options: {
       cwd: this.cwd, abortController: this.abort, canUseTool: this.canUseTool, includePartialMessages: true,
-      // Keep approvals with the user: never inherit a bypass or auto mode from settings.
+      // The runtime records and resolves approvals; the SDK itself keeps its normal permission mode.
       permissionMode: 'default',
       ...(this.executable ? { pathToClaudeCodeExecutable: this.executable } : {}),
       ...(this.model && this.model !== 'default' ? { model: this.model } : {}),

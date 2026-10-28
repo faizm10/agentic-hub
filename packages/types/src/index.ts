@@ -56,6 +56,9 @@ export const ProjectSchema = z.object({
 });
 export type Project = z.infer<typeof ProjectSchema>;
 
+/** Local space for API model chats that are unrelated to a Git repository. */
+export const MODEL_CHAT_PROJECT_ID = '00000000-0000-4000-8000-000000000001';
+
 export const SessionStatusSchema = z.enum(['idle', 'running', 'awaiting_approval', 'completed', 'failed', 'cancelled', 'interrupted']);
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export const SessionSchema = z.object({
@@ -68,6 +71,17 @@ export const SessionSchema = z.object({
   updatedAt: TimestampSchema,
 });
 export type Session = z.infer<typeof SessionSchema>;
+
+export const QueuedMessageSchema = z.object({ id: IdSchema, sessionId: IdSchema, text: z.string().min(1), createdAt: TimestampSchema });
+export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
+
+export interface DeveloperActivity {
+  github: { connected: boolean; detail: string; repositoryUrl?: string; commits: { sha: string; title: string; author: string; date: string; url: string }[]; pullRequests: { number: number; title: string; url: string; updatedAt: string; state: string }[] };
+  vercel: { connected: boolean; detail: string; deployments: { id: string; url: string; state: string; target: string; createdAt: string }[] };
+  update: { available: boolean; behind: number; ahead: number; branch: string; blockedReason?: string };
+}
+
+export interface IdeUpdateInfo { currentVersion: string; latestVersion: string | null; available: boolean; releaseUrl: string | null; detail: string }
 
 export const TaskSchema = z.object({
   id: IdSchema,
@@ -169,8 +183,10 @@ export const SessionResponseSchema = z.object({ session: SessionSchema });
 export type SessionResponse = z.infer<typeof SessionResponseSchema>;
 export const SendMessageRequestSchema = z.object({ text: z.string().min(1) });
 export type SendMessageRequest = z.infer<typeof SendMessageRequestSchema>;
-export const SendMessageResponseSchema = z.object({ task: TaskSchema, run: TaskRunSchema });
+export const SendMessageResponseSchema = z.union([z.object({ task: TaskSchema, run: TaskRunSchema }), z.object({ queued: QueuedMessageSchema })]);
 export type SendMessageResponse = z.infer<typeof SendMessageResponseSchema>;
+export const GetQueuedMessagesResponseSchema = z.object({ messages: z.array(QueuedMessageSchema) });
+export type GetQueuedMessagesResponse = z.infer<typeof GetQueuedMessagesResponseSchema>;
 export const CancelSessionResponseSchema = SessionResponseSchema;
 export type CancelSessionResponse = z.infer<typeof CancelSessionResponseSchema>;
 export const GetSessionEventsResponseSchema = z.object({ events: z.array(AgentEventSchema), nextSequence: z.number().int().nonnegative() });

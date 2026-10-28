@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { MODEL_CHAT_PROJECT_ID } from '@agentic-hub/types';
 import type { AgentConfig, AgentEvent, AgentProvider, ApprovalDecision, ModelInfo, NewAgentEvent, NewStreamDelta, AgentCapabilities, ProviderInfo, Session, StreamDelta, Task, TaskRun } from '@agentic-hub/types';
 import { Store, redactStoredText } from '@agentic-hub/database';
 
@@ -108,6 +109,8 @@ export type DeltaListener = (delta: StreamDelta) => void;
 export class SessionManager {
   private active = new Map<string, Active>();
   private starting = new Set<string>();
+  private draining = new Set<string>();
+  private closing = false;
   private bus = new EventEmitter();
   constructor(readonly store: Store, readonly registry: AgentRegistry) { this.bus.setMaxListeners(0); }
   subscribe(sessionId: string, listener: SessionListener): () => void {
@@ -125,10 +128,45 @@ export class SessionManager {
     return () => this.bus.off('*', listener);
   }
   isActive(sessionId: string): boolean { return this.active.has(sessionId) || this.starting.has(sessionId); }
+  autoApprove(): boolean { return this.store.secret('settings:autoApprove') === 'true'; }
+  setAutoApprove(enabled: boolean): boolean { this.store.setSecret('settings:autoApprove', String(enabled)); return enabled; }
+  async sendOrQueue(sessionId: string, text: string) {
+    const session = this.store.session(sessionId);
+    if (!session) throw new HubError('NOT_FOUND', 404, 'Session not found');
+    if (this.isActive(sessionId) || session.status === 'running' || session.status === 'awaiting_approval' || this.store.queuedMessages(sessionId).length) {
+      const queued = this.store.enqueueMessage(sessionId, text);
+      if (!this.isActive(sessionId)) void this.drainQueue(sessionId);
+      return { queued };
+    }
+    try { return await this.send(sessionId, text); }
+    catch (error) {
+      if (!(error instanceof HubError) || error.code !== 'CONFLICT') throw error;
+      return { queued: this.store.enqueueMessage(sessionId, text) };
+    }
+  }
+  private async drainQueue(sessionId: string): Promise<void> {
+    if (this.closing || this.draining.has(sessionId) || this.isActive(sessionId)) return;
+    const next = this.store.queuedMessages(sessionId)[0];
+    if (!next) return;
+    this.draining.add(sessionId);
+    let started = false;
+    try {
+      await this.send(sessionId, next.text);
+      this.store.deleteQueuedMessage(sessionId, next.id);
+      started = true;
+    } catch {
+      // Keep the message queued and retry when the provider becomes available.
+      if (!this.closing) setTimeout(() => { void this.drainQueue(sessionId); }, 10_000).unref?.();
+    }
+    finally { this.draining.delete(sessionId); }
+    if (started && !this.isActive(sessionId)) void this.drainQueue(sessionId);
+  }
+  resumeQueues(): void { for (const sessionId of this.store.queuedSessions()) void this.drainQueue(sessionId); }
   async create(projectId: string, config: AgentConfig): Promise<Session> {
     const project = this.store.project(projectId);
     if (!project) throw new HubError('NOT_FOUND', 404, 'Project not found');
     const adapter = this.registry.get(config.provider);
+    if (projectId === MODEL_CHAT_PROJECT_ID && config.provider !== 'openai' && config.provider !== 'anthropic') throw new HubError('VALIDATION_ERROR', 400, 'Coding agents require a Git repository');
     const info = await this.registry.readiness(config.provider);
     if (!info.ready || !adapter.capabilities.execution) throw new HubError('PROVIDER_UNAVAILABLE', 503, info.reason ?? 'Provider is not ready');
     const now = new Date().toISOString();
@@ -197,6 +235,10 @@ export class SessionManager {
       this.store.saveRun({ ...run, status: 'awaiting_approval' });
     }
     this.append(sessionId, active.runId, event);
+    if (event.type === 'approval_requested' && this.autoApprove()) {
+      const approvalId = event.approval.id;
+      queueMicrotask(() => { void this.resolveApproval(approvalId, 'approve').catch(() => {}); });
+    }
   }
   private finish(sessionId: string, active: Active, outcome: 'completed' | 'failed' | 'cancelled', error: string | null): void {
     if (active.finished) return;
@@ -209,6 +251,7 @@ export class SessionManager {
     this.active.delete(sessionId);
     active.unsubscribe();
     void active.adapter.cleanup().catch(() => {});
+    void this.drainQueue(sessionId);
   }
   async cancel(id: string): Promise<Session> {
     const session = this.store.session(id);
@@ -241,6 +284,7 @@ export class SessionManager {
     return next;
   }
   async close(): Promise<void> {
+    this.closing = true;
     await Promise.allSettled([...this.active.entries()].map(async ([id, active]) => {
       active.cancelRequested = true;
       try { await active.adapter.cancel(); } finally { this.finish(id, active, 'cancelled', null); }

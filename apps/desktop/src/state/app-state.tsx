@@ -1,7 +1,7 @@
 import { safeStorage, type AgentId } from "@agentic-hub/ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-export type View = "welcome" | "repositories" | "workspace" | "history" | "review" | "providers" | "settings";
+export type View = "welcome" | "repositories" | "workspace" | "history" | "review" | "providers" | "activity" | "settings";
 export type DataMode = "demo" | "live";
 
 export interface Preferences {

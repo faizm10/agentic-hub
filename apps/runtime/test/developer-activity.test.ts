@@ -1,0 +1,43 @@
+import { afterEach, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { updateRepository, updateState } from '../src/developer-activity.js';
+
+const exec = promisify(execFile);
+const dirs: string[] = [];
+afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+
+it('offers only clean fast-forward updates', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hub-update-')); dirs.push(root);
+  const remote = join(root, 'remote.git');
+  const local = join(root, 'local');
+  const writer = join(root, 'writer');
+  const git = async (cwd: string, ...args: string[]) => exec('git', args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' } });
+  await git(root, 'init', '--bare', remote);
+  await git(root, 'init', local);
+  await writeFile(join(local, 'note.txt'), 'one');
+  await git(local, 'add', 'note.txt');
+  await git(local, 'commit', '-m', 'one');
+  await git(local, 'branch', '-M', 'main');
+  await git(local, 'remote', 'add', 'origin', remote);
+  await git(local, 'push', '-u', 'origin', 'main');
+  await git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  await git(root, 'clone', remote, writer);
+  await writeFile(join(writer, 'note.txt'), 'two');
+  await git(writer, 'add', 'note.txt');
+  await git(writer, 'commit', '-m', 'two');
+  await git(writer, 'push', 'origin', 'main');
+  expect((await updateState(local)).behind).toBe(1);
+  await updateRepository(local);
+  expect((await updateState(local)).available).toBe(false);
+  await writeFile(join(local, 'note.txt'), 'local change');
+  await writeFile(join(writer, 'note.txt'), 'three');
+  await git(writer, 'add', 'note.txt');
+  await git(writer, 'commit', '-m', 'three');
+  await git(writer, 'push', 'origin', 'main');
+  expect((await updateState(local)).blockedReason).toMatch(/Commit or stash/);
+  await expect(updateRepository(local)).rejects.toMatchObject({ code: 'CONFLICT' });
+});

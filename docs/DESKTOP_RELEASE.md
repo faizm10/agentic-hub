@@ -56,4 +56,4 @@ Bump the version in `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/src-
 ## Notes
 
 - The app bundles the runtime as a single JavaScript file (`Contents/Resources/runtime/agentic-hub-runtime.mjs`) and runs it with the user's Node.js 22.13+. Users without Node.js see a clear message with a Retry button.
-- Auto-update is not configured. To add it, use the Tauri updater plugin with your own signing key and a hosted update manifest.
+- Settings checks the latest public GitHub release and offers a button to open its download page. Automatic installation is not configured. To add it, use the Tauri updater plugin with your own signing key and a hosted update manifest.
